@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { convertFileSrc } from '@tauri-apps/api/core';
+import { open } from '@tauri-apps/plugin-dialog';
 import {
-  Camera, Calendar, Grid, Image as ImageIcon, Maximize2, X,
-  ChevronDown, ChevronRight, Cloud, Download, HardDrive, FolderOpen
+  Camera, Calendar, Grid, Image as ImageIcon, X,
+  ChevronDown, ChevronRight, Cloud, Download, HardDrive, FolderOpen, Upload
 } from 'lucide-react';
 
 // --- COMPONENTS ---
@@ -94,18 +95,19 @@ const App = () => {
   const [error, setError] = useState(null);
   const [expandedGroups, setExpandedGroups] = useState({});
   const [scanPath, setScanPath] = useState('');
+  const [uploadStatus, setUploadStatus] = useState('');
 
-  const scanDirectory = async () => {
-    if (!scanPath) {
-      setError('Please enter a directory path');
-      return;
-    }
+  // Load photos from database on startup
+  useEffect(() => {
+    loadPhotosFromDatabase();
+  }, []);
 
+  const loadPhotosFromDatabase = async () => {
     setLoading(true);
     setError(null);
 
     try {
-      const result = await invoke('scan_directory', { dirPath: scanPath });
+      const result = await invoke('get_all_photos');
       const processedPhotos = result.map(p => ({
         id: p.path,
         url: convertFileSrc(p.path),
@@ -117,6 +119,29 @@ const App = () => {
       }));
       setPhotos(processedPhotos);
     } catch (err) {
+      // If database is empty or doesn't exist yet, that's okay
+      console.log('No photos in database yet:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const scanDirectory = async () => {
+    if (!scanPath) {
+      setError('Please enter a directory path');
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      // Pass save_to_db: true to persist scanned photos
+      await invoke('scan_directory', { dirPath: scanPath, saveToDb: true });
+
+      // Reload from database to get all photos sorted chronologically
+      await loadPhotosFromDatabase();
+    } catch (err) {
       setError(`Failed to scan directory: ${err}`);
       console.error('Scan error:', err);
     } finally {
@@ -124,9 +149,53 @@ const App = () => {
     }
   };
 
+  const handleUploadPhotos = async () => {
+    try {
+      setUploadStatus('Selecting files...');
+
+      // Open file dialog for multiple image selection
+      const selected = await open({
+        multiple: true,
+        filters: [{
+          name: 'Images',
+          extensions: ['jpg', 'jpeg', 'png', 'heic', 'webp', 'gif', 'bmp']
+        }]
+      });
+
+      if (!selected || selected.length === 0) {
+        setUploadStatus('');
+        return;
+      }
+
+      setLoading(true);
+      setUploadStatus(`Uploading ${selected.length} photos...`);
+
+      // Upload photos to managed library
+      const uploaded = await invoke('upload_photos', { filePaths: selected });
+
+      setUploadStatus(`Successfully uploaded ${uploaded.length} photos!`);
+
+      // Reload from database to show uploaded photos in chronological order
+      await loadPhotosFromDatabase();
+
+      // Clear status after 3 seconds
+      setTimeout(() => setUploadStatus(''), 3000);
+    } catch (err) {
+      setError(`Failed to upload photos: ${err}`);
+      console.error('Upload error:', err);
+      setUploadStatus('');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Sort photos chronologically and group them
   const groupedPhotos = useMemo(() => {
+    // First, sort all photos by date (newest first)
+    const sortedPhotos = [...photos].sort((a, b) => b.date - a.date);
+
     const groups = {};
-    photos.forEach(photo => {
+    sortedPhotos.forEach(photo => {
       const date = new Date(photo.date * 1000);
       let key = 'All Photos';
       if (viewMode === 'year') key = date.getFullYear().toString();
@@ -157,6 +226,9 @@ const App = () => {
         <div className="p-6 border-b border-white/5">
           <h1 className="text-2xl font-bold tracking-tighter bg-gradient-to-r from-emerald-200 to-white/50 bg-clip-text text-transparent">TERRA</h1>
           <div className="text-xs text-white/40 font-mono mt-1 tracking-widest">LOCAL LIBRARY</div>
+          {photos.length > 0 && (
+            <div className="mt-2 text-xs text-emerald-400/60 font-mono">{photos.length} photos</div>
+          )}
         </div>
 
         <nav className="flex-1 p-4 space-y-2 overflow-y-auto">
@@ -171,7 +243,17 @@ const App = () => {
             <Calendar size={18} /> <span>Months</span>
           </button>
 
-          <div className="mt-8 text-xs font-mono text-white/30 uppercase tracking-widest mb-2 px-2">Import</div>
+          <div className="mt-8 text-xs font-mono text-white/30 uppercase tracking-widest mb-2 px-2">Library</div>
+          <button
+            onClick={handleUploadPhotos}
+            disabled={loading}
+            className="w-full flex items-center space-x-3 px-3 py-2 rounded-lg text-sm transition-all bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-400/20 hover:border-emerald-400/40 disabled:opacity-50"
+          >
+            <Upload size={18} />
+            <span>Upload Photos</span>
+          </button>
+
+          <div className="mt-8 text-xs font-mono text-white/30 uppercase tracking-widest mb-2 px-2">Cloud Import</div>
           <div className="space-y-1">
             <CloudProviderButton icon={Cloud} name="iCloud Photos" />
             <CloudProviderButton icon={ImageIcon} name="Google Photos" />
@@ -184,7 +266,7 @@ const App = () => {
       <div className="pl-72 pr-4 py-4 min-h-screen">
         <div className="sticky top-4 z-10 mb-6 p-4 rounded-xl border border-white/10 bg-black/40 backdrop-blur-lg shadow-lg">
           <div className="flex items-center space-x-2">
-            <span className="font-mono text-white/40 text-sm">source://</span>
+            <span className="font-mono text-white/40 text-sm">scan://</span>
             <input
               type="text"
               value={scanPath}
@@ -198,23 +280,29 @@ const App = () => {
               className="flex items-center space-x-2 px-4 py-2 bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-400/30 rounded text-sm text-emerald-300 transition-all disabled:opacity-50"
             >
               <FolderOpen size={16} />
-              <span>{loading ? 'Scanning...' : 'Scan'}</span>
+              <span>{loading ? 'Scanning...' : 'Scan & Import'}</span>
             </button>
           </div>
           {error && (
             <div className="mt-2 text-xs text-red-400 font-mono">{error}</div>
+          )}
+          {uploadStatus && (
+            <div className="mt-2 text-xs text-emerald-400 font-mono">{uploadStatus}</div>
           )}
         </div>
 
         {loading ? (
           <div className="h-[60vh] flex flex-col items-center justify-center space-y-4">
             <div className="w-12 h-12 border-2 border-white/20 border-t-emerald-400 rounded-full animate-spin"></div>
-            <div className="font-mono text-sm text-white/50 animate-pulse">Scanning Local Drive...</div>
+            <div className="font-mono text-sm text-white/50 animate-pulse">{uploadStatus || 'Processing...'}</div>
           </div>
         ) : photos.length === 0 ? (
           <div className="h-[60vh] flex flex-col items-center justify-center space-y-4">
             <Camera size={48} className="text-white/20" />
-            <div className="font-mono text-sm text-white/50">No photos loaded. Enter a directory path above and click Scan.</div>
+            <div className="font-mono text-sm text-white/50 text-center">
+              No photos in library yet.<br />
+              Upload photos or scan a directory to get started.
+            </div>
           </div>
         ) : (
           <div className="space-y-8 pb-20">
