@@ -1,0 +1,44 @@
+{
+  "productName": "Terra",
+  "version": "0.1.0",
+  "identifier": "com.terra.app",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "publisher": "Terra",
+    "homepage": "https://terra.local",
+    "longDescription": "High-performance local photo gallery for macOS capable of browsing massive libraries with a unique aesthetic.",
+    "macOS": {
+      "minimumSystemVersion": "10.15"
+    }
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Terra - Local Photo Gallery",
+        "width": 1400,
+        "height": 900,
+        "resizable": true,
+        "fullscreen": false,
+        "decorations": true,
+        "transparent": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  }
+}
