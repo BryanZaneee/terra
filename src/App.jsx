@@ -4,7 +4,7 @@ import { convertFileSrc } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import {
   Camera, Calendar, Grid, Image as ImageIcon, X,
-  ChevronDown, ChevronRight, Cloud, Download, HardDrive, FolderOpen, Upload
+  ChevronDown, ChevronRight, Cloud, Download, HardDrive, Upload
 } from 'lucide-react';
 
 // --- COMPONENTS ---
@@ -25,10 +25,20 @@ const DitherBackground = () => {
     window.addEventListener('resize', resize);
     resize();
 
-    let t = 0;
-    const render = () => {
-      t += 0.002;
+    // Create 6-10 bubbles with varying sizes (small to large)
+    const bubbles = [];
+    const bubbleCount = Math.floor(Math.random() * 5) + 6; // 6-10 bubbles
 
+    for (let i = 0; i < bubbleCount; i++) {
+      bubbles.push({
+        x: Math.random() * canvas.width,
+        y: Math.random() * canvas.height,
+        radius: Math.random() * 60 + 20, // 20-80px radius (small to large)
+        speed: 0.004 // 2x faster than original (was 0.002)
+      });
+    }
+
+    const render = () => {
       ctx.fillStyle = '#050505';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       ctx.fillStyle = '#2a2a2a';
@@ -37,15 +47,48 @@ const DitherBackground = () => {
       const cols = Math.floor(canvas.width / 12);
       const rows = Math.floor(canvas.height / 14);
 
+      // Move bubbles upward and wrap around
+      bubbles.forEach(bubble => {
+        bubble.y -= bubble.speed * 100; // Move upward
+        if (bubble.y + bubble.radius < 0) {
+          // Wrap to bottom when bubble exits top
+          bubble.y = canvas.height + bubble.radius;
+          bubble.x = Math.random() * canvas.width; // New random x position
+        }
+      });
+
+      // Render bubbles using distance-based ASCII characters
       for (let y = 0; y < rows; y++) {
         for (let x = 0; x < cols; x++) {
-          const noise = Math.sin(x * 0.03 + t) * Math.cos(y * 0.03 + t * 0.5);
-          if (noise > 0.6) {
-            const charIndex = Math.floor(((noise - 0.6) * 2.5) * chars.length) % chars.length;
-            ctx.fillText(chars[charIndex], x * 12, y * 14);
+          const pixelX = x * 12;
+          const pixelY = y * 14;
+
+          // Check distance to each bubble
+          let closestDist = Infinity;
+          let closestRadius = 0;
+
+          bubbles.forEach(bubble => {
+            const dx = pixelX - bubble.x;
+            const dy = pixelY - bubble.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            const normalizedDist = dist / bubble.radius;
+
+            if (normalizedDist < closestDist) {
+              closestDist = normalizedDist;
+              closestRadius = bubble.radius;
+            }
+          });
+
+          // Render bubble outline with ASCII characters
+          if (closestDist < 1.0) {
+            // Inside bubble - use gradient based on distance from edge
+            const intensity = 1.0 - closestDist;
+            const charIndex = Math.floor(intensity * (chars.length - 1));
+            ctx.fillText(chars[charIndex], pixelX, pixelY);
           }
         }
       }
+
       animationFrameId = requestAnimationFrame(render);
     };
     render();
@@ -94,7 +137,6 @@ const App = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [expandedGroups, setExpandedGroups] = useState({});
-  const [scanPath, setScanPath] = useState('');
   const [uploadStatus, setUploadStatus] = useState('');
 
   // Load photos from database on startup
@@ -126,32 +168,10 @@ const App = () => {
     }
   };
 
-  const scanDirectory = async () => {
-    if (!scanPath) {
-      setError('Please enter a directory path');
-      return;
-    }
-
-    setLoading(true);
-    setError(null);
-
-    try {
-      // Pass save_to_db: true to persist scanned photos
-      await invoke('scan_directory', { dirPath: scanPath, saveToDb: true });
-
-      // Reload from database to get all photos sorted chronologically
-      await loadPhotosFromDatabase();
-    } catch (err) {
-      setError(`Failed to scan directory: ${err}`);
-      console.error('Scan error:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const handleUploadPhotos = async () => {
     try {
       setUploadStatus('Selecting files...');
+      setError(null);
 
       // Open file dialog for multiple image selection
       const selected = await open({
@@ -232,7 +252,29 @@ const App = () => {
         </div>
 
         <nav className="flex-1 p-4 space-y-2 overflow-y-auto">
-          <div className="text-xs font-mono text-white/30 uppercase tracking-widest mb-2 px-2">View By</div>
+          {/* Upload Photos Button - Moved to top */}
+          <button
+            onClick={handleUploadPhotos}
+            disabled={loading}
+            className="w-full flex items-center justify-center space-x-3 px-4 py-3 rounded-lg text-sm font-medium transition-all bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 border border-emerald-400/30 hover:border-emerald-400/50 disabled:opacity-50 shadow-lg shadow-emerald-500/10"
+          >
+            <Upload size={20} />
+            <span>Upload Photos</span>
+          </button>
+
+          {/* Status Messages */}
+          {uploadStatus && (
+            <div className="px-3 py-2 rounded-lg bg-emerald-500/10 border border-emerald-400/20">
+              <div className="text-xs text-emerald-400 font-mono text-center">{uploadStatus}</div>
+            </div>
+          )}
+          {error && (
+            <div className="px-3 py-2 rounded-lg bg-red-500/10 border border-red-400/20">
+              <div className="text-xs text-red-400 font-mono text-center">{error}</div>
+            </div>
+          )}
+
+          <div className="pt-4 text-xs font-mono text-white/30 uppercase tracking-widest mb-2 px-2">View By</div>
           <button onClick={() => setViewMode('all')} className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg text-sm transition-all ${viewMode === 'all' ? 'bg-white/10 text-white' : 'text-white/60 hover:bg-white/5'}`}>
             <Grid size={18} /> <span>All Photos</span>
           </button>
@@ -241,16 +283,6 @@ const App = () => {
           </button>
           <button onClick={() => setViewMode('month')} className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg text-sm transition-all ${viewMode === 'month' ? 'bg-white/10 text-white' : 'text-white/60 hover:bg-white/5'}`}>
             <Calendar size={18} /> <span>Months</span>
-          </button>
-
-          <div className="mt-8 text-xs font-mono text-white/30 uppercase tracking-widest mb-2 px-2">Library</div>
-          <button
-            onClick={handleUploadPhotos}
-            disabled={loading}
-            className="w-full flex items-center space-x-3 px-3 py-2 rounded-lg text-sm transition-all bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-400/20 hover:border-emerald-400/40 disabled:opacity-50"
-          >
-            <Upload size={18} />
-            <span>Upload Photos</span>
           </button>
 
           <div className="mt-8 text-xs font-mono text-white/30 uppercase tracking-widest mb-2 px-2">Cloud Import</div>
@@ -264,33 +296,6 @@ const App = () => {
 
       {/* Main Content */}
       <div className="pl-72 pr-4 py-4 min-h-screen">
-        <div className="sticky top-4 z-10 mb-6 p-4 rounded-xl border border-white/10 bg-black/40 backdrop-blur-lg shadow-lg">
-          <div className="flex items-center space-x-2">
-            <span className="font-mono text-white/40 text-sm">scan://</span>
-            <input
-              type="text"
-              value={scanPath}
-              onChange={(e) => setScanPath(e.target.value)}
-              placeholder="/Users/YourName/Pictures"
-              className="flex-1 bg-white/5 border border-white/10 rounded px-3 py-2 text-sm text-white placeholder-white/30 focus:outline-none focus:border-emerald-400/50"
-            />
-            <button
-              onClick={scanDirectory}
-              disabled={loading}
-              className="flex items-center space-x-2 px-4 py-2 bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-400/30 rounded text-sm text-emerald-300 transition-all disabled:opacity-50"
-            >
-              <FolderOpen size={16} />
-              <span>{loading ? 'Scanning...' : 'Scan & Import'}</span>
-            </button>
-          </div>
-          {error && (
-            <div className="mt-2 text-xs text-red-400 font-mono">{error}</div>
-          )}
-          {uploadStatus && (
-            <div className="mt-2 text-xs text-emerald-400 font-mono">{uploadStatus}</div>
-          )}
-        </div>
-
         {loading ? (
           <div className="h-[60vh] flex flex-col items-center justify-center space-y-4">
             <div className="w-12 h-12 border-2 border-white/20 border-t-emerald-400 rounded-full animate-spin"></div>
@@ -301,7 +306,7 @@ const App = () => {
             <Camera size={48} className="text-white/20" />
             <div className="font-mono text-sm text-white/50 text-center">
               No photos in library yet.<br />
-              Upload photos or scan a directory to get started.
+              Click "Upload Photos" to get started.
             </div>
           </div>
         ) : (

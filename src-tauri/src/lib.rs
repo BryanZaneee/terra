@@ -1,6 +1,6 @@
 use std::fs;
 use std::path::Path;
-use std::time::UNIX_EPOCH;
+use std::time::{UNIX_EPOCH, SystemTime};
 use walkdir::WalkDir;
 use rayon::prelude::*;
 use serde::{Serialize, Deserialize};
@@ -19,10 +19,14 @@ pub struct PhotoMetadata {
 
 /// Parse EXIF DateTimeOriginal field (format: "2023:01:15 14:30:45")
 fn parse_exif_datetime(datetime_str: &str) -> Option<i64> {
+    // Trim null terminators and whitespace that can appear in EXIF strings
+    let datetime_str = datetime_str.trim_end_matches('\0').trim();
+
     let cleaned = datetime_str.replace(':', "-");
     let parts: Vec<&str> = cleaned.split(' ').collect();
 
     if parts.len() != 2 {
+        eprintln!("Invalid EXIF datetime format: {}", datetime_str);
         return None;
     }
 
@@ -30,26 +34,40 @@ fn parse_exif_datetime(datetime_str: &str) -> Option<i64> {
     let time_part = parts[1].replace('-', ":");
     let combined = format!("{} {}", date_part, time_part);
 
-    NaiveDateTime::parse_from_str(&combined, "%Y-%m-%d %H:%M:%S")
-        .ok()
-        .map(|dt| dt.and_utc().timestamp())
+    match NaiveDateTime::parse_from_str(&combined, "%Y-%m-%d %H:%M:%S") {
+        Ok(dt) => Some(dt.and_utc().timestamp()),
+        Err(e) => {
+            eprintln!("Failed to parse EXIF datetime '{}': {}", combined, e);
+            None
+        }
+    }
 }
 
 /// Extract EXIF metadata from an image file
 fn extract_exif_date(path: &Path) -> Option<i64> {
-    let exif_data = rexif::parse_file(path).ok()?;
+    let exif_data = match rexif::parse_file(path) {
+        Ok(data) => data,
+        Err(e) => {
+            eprintln!("Failed to parse EXIF for {:?}: {}", path.file_name(), e);
+            return None;
+        }
+    };
 
     // Try DateTimeOriginal first (most accurate for photos)
     for entry in &exif_data.entries {
         if entry.tag == rexif::ExifTag::DateTimeOriginal || entry.tag == rexif::ExifTag::DateTime {
             if let rexif::TagValue::Ascii(ref s) = entry.value {
-                if let Some(timestamp) = parse_exif_datetime(s) {
+                // Trim null terminators that can appear in EXIF strings
+                let trimmed = s.trim_end_matches('\0').trim();
+                if let Some(timestamp) = parse_exif_datetime(trimmed) {
+                    println!("Found EXIF date for {:?}: {}", path.file_name(), trimmed);
                     return Some(timestamp);
                 }
             }
         }
     }
 
+    eprintln!("No EXIF date found for {:?}", path.file_name());
     None
 }
 
@@ -68,18 +86,48 @@ fn get_file_modified_time(path: &Path) -> Option<i64> {
 fn process_image(path: &Path) -> Option<PhotoMetadata> {
     let name = path.file_name()?.to_string_lossy().to_string();
 
-    // Try EXIF first, fallback to file modified time
+    // Canonicalize path for reliable Tauri file access with convertFileSrc
+    let canonical_path = match path.canonicalize() {
+        Ok(p) => {
+            println!("Canonicalized path for {}: {}", name, p.display());
+            p.to_string_lossy().to_string()
+        },
+        Err(e) => {
+            eprintln!("Warning: Could not canonicalize path {:?}: {}", path, e);
+            path.to_string_lossy().to_string()
+        }
+    };
+
+    // Try EXIF first, fallback to file modified time, then current time
     let date_taken = extract_exif_date(path)
-        .or_else(|| get_file_modified_time(path))
-        .unwrap_or(0);
+        .or_else(|| {
+            let mtime = get_file_modified_time(path);
+            if mtime.is_some() {
+                println!("Using file modified time for {}", name);
+            }
+            mtime
+        })
+        .unwrap_or_else(|| {
+            // Use current time as last resort instead of epoch
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64;
+            eprintln!("WARNING: No date found for {}, using current time: {}", name, now);
+            now
+        });
 
     // Get image dimensions
-    let (width, height) = image::open(path)
-        .map(|img| (img.width(), img.height()))
-        .unwrap_or((0, 0));
+    let (width, height) = match image::open(path) {
+        Ok(img) => (img.width(), img.height()),
+        Err(e) => {
+            eprintln!("Failed to read image dimensions for {}: {}", name, e);
+            (0, 0)
+        }
+    };
 
     Some(PhotoMetadata {
-        path: path.to_string_lossy().to_string(),
+        path: canonical_path,
         name,
         date_taken,
         width,
@@ -189,16 +237,40 @@ fn upload_photos(file_paths: Vec<String>) -> Result<Vec<PhotoMetadata>, String> 
             }
 
             // Copy the file
-            fs::copy(source_path, &final_dest_path).ok()?;
+            match fs::copy(source_path, &final_dest_path) {
+                Ok(_) => println!("Copied {} to {}", file_path, final_dest_path.display()),
+                Err(e) => {
+                    eprintln!("Failed to copy {}: {}", file_path, e);
+                    return None;
+                }
+            }
 
-            // Update photo path to the new location
-            photo.path = final_dest_path.to_string_lossy().to_string();
+            // Canonicalize the destination path for Tauri file access
+            let canonical_dest = match final_dest_path.canonicalize() {
+                Ok(p) => {
+                    println!("Canonicalized destination: {}", p.display());
+                    p.to_string_lossy().to_string()
+                },
+                Err(e) => {
+                    eprintln!("Warning: Could not canonicalize destination {:?}: {}", final_dest_path, e);
+                    final_dest_path.to_string_lossy().to_string()
+                }
+            };
+
+            // Update photo path to the new canonicalized location
+            photo.path = canonical_dest.clone();
             photo.name = final_dest_path.file_name()?.to_string_lossy().to_string();
 
             // Save to database
-            db::insert_photo(&conn, &photo, "upload").ok()?;
+            match db::insert_photo(&conn, &photo, "upload") {
+                Ok(_) => println!("Saved to database: {}", photo.name),
+                Err(e) => {
+                    eprintln!("Failed to save {} to database: {}", photo.name, e);
+                    return None;
+                }
+            }
 
-            println!("Uploaded: {} -> {}", file_path, photo.path);
+            println!("Successfully uploaded: {} -> {}", file_path, photo.path);
             Some(photo)
         })
         .collect();
