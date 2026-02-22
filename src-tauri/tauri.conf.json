@@ -44,7 +44,8 @@
         "enable": true,
         "scope": [
           "$PICTURE/**",
-          "$DATA/**"
+          "$DATA/**",
+          "$HOME/**"
         ]
       }
     }
