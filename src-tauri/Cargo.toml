@@ -26,6 +26,13 @@ rayon = "1.10"
 rusqlite = { version = "0.32", features = ["bundled"] }
 dirs = "5.0"
 regex = "1"
+sha2 = "0.10"
+hex = "0.4"
+reverse_geocoder = "3.0"
+lazy_static = "1.4"
+image_hasher = "2.0"
+log = "0.4"
+env_logger = "0.11"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-shell = "2"

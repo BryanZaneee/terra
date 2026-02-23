@@ -4,77 +4,77 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Terra is a high-performance local photo gallery application for macOS built with Tauri v2, React, and Rust. It features a managed photo library system with SQLite caching, EXIF metadata extraction, and a unique glassy UI with animated ASCII dithered background.
+Terra is a high-performance local photo gallery application for macOS built with Tauri v2, React, and Rust. It features a managed photo library system with SQLite caching, EXIF/GPS metadata extraction, duplicate detection, screenshot detection, tagging, smart collections, and a unique glassy UI with animated ASCII dithered background.
 
 ## Development Commands
 
-### Running the Application
 ```bash
+# Development
 npm run tauri:dev       # Start Tauri development server (includes Vite)
-npm run dev             # Start Vite dev server only (for frontend-only work)
-```
+npm run dev             # Start Vite dev server only (frontend-only work)
 
-**Important**: First build takes 2-5 minutes for Rust compilation. After moving the project directory, run `cd src-tauri && cargo clean` to clear cached build artifacts with old paths.
-
-### Building for Production
-```bash
+# Production
 npm run tauri:build     # Creates macOS .app bundle in src-tauri/target/release/bundle/
-npm run build           # Build frontend only
-```
 
-### Testing Rust Backend
-```bash
+# Rust Backend Testing
 cd src-tauri
 cargo check             # Fast compilation check
-cargo test              # Run tests (if any)
+cargo test              # Run tests
 cargo build             # Build without running
 ```
+
+**First build takes 2-5 minutes** for Rust compilation. After moving the project directory, run `cd src-tauri && cargo clean` to clear cached build artifacts.
 
 ## Architecture
 
 ### Three-Layer System
 
 1. **Rust Backend** (`src-tauri/src/`)
-   - `lib.rs` - Core photo processing with three Tauri commands:
-     - `scan_directory(dir_path, save_to_db)` - Legacy directory scanning
-     - `upload_photos(file_paths)` - **Primary import method** - copies photos to managed library
-     - `get_all_photos()` - Retrieves all photos from SQLite database
-   - `db.rs` - SQLite operations and library management
-   - `main.rs` - Desktop entry point (just calls `terra_lib::run()`)
+   - `lib.rs` - Core photo processing with 40+ Tauri commands organized into sections:
+     - Photo management: `upload_photos`, `get_all_photos`, `scan_directory`, `delete_photos`
+     - Favorites: `toggle_favorite`
+     - Albums: `create_album`, `delete_album`, `get_albums`, `add_to_album`, `remove_from_album`, `get_album_photos`, `set_album_cover`
+     - Duplicate detection: `scan_for_duplicates`, `get_duplicate_groups` (uses perceptual dHash)
+     - Screenshot detection: `scan_for_screenshots`, `get_screenshots`
+     - Archive: `archive_photos`, `restore_photos`, `get_archived_photos`, `cleanup_old_archives` (14-day auto-delete)
+     - TerraForm review: `get_unreviewed_photos`, `mark_photo_reviewed`, `get_unreviewed_count`, `unmark_photo_reviewed`
+     - Tags: `create_tag`, `update_tag`, `delete_tag`, `get_all_tags`, `get_tags_for_photo`, `add_tags_to_photos`, `remove_tag_from_photo`, `get_photos_by_tags`, `search_tags`
+     - Smart Collections: `get_smart_collections`, `get_smart_collection_photos`
+     - Storage Analytics: `get_storage_analytics`, `populate_file_sizes`
+     - Search: `search_photos`, `get_locations`, `get_duplicates`
+   - `db.rs` - SQLite operations with comprehensive schema supporting all features
+   - `main.rs` - Desktop entry point (calls `terra_lib::run()`)
 
 2. **React Frontend** (`src/App.jsx`)
-   - Single-component architecture (350+ lines)
+   - Single-file component architecture (~2000 lines)
+   - Components: `DitherBackground`, `PhotoModal`, `VideoPlayer`, `CreateAlbumModal`, `AddToAlbumModal`, `ScanModal`, `DuplicateReviewGallery`, `ScreenshotReviewGallery`, `ArchiveView`, `ErrorBoundary`
    - Uses Tauri's `invoke()` for backend communication
-   - Uses Tauri's `convertFileSrc()` to convert file paths to `asset://` protocol URLs
+   - Uses `convertFileSrc()` to convert file paths to `asset://` protocol URLs
 
 3. **SQLite Database** (`~/Library/Application Support/terra/photos.db`)
-   - Persists photo metadata for instant startup
-   - Schema: `path, name, date_taken, width, height, source_type, created_at`
-   - Indexed on `date_taken` for fast chronological sorting
+   - Schema includes: `path, name, date_taken, width, height, source_type, created_at, is_favorite, content_hash, latitude, longitude, location_name, dhash_64, is_screenshot, archived_at, reviewed_at, file_size`
+   - Tables: `photos`, `albums`, `album_photos`, `tags`, `photo_tags`
+   - Indexes on: `date_taken`, `content_hash`, `location_name`, `dhash_64`, `archived_at`, `reviewed_at`, `file_size`
 
-### Managed Library System
+### File Paths
 
-**Critical**: Terra copies uploaded photos to `~/Pictures/Terra/YYYY/MM/` organized by date. The database stores canonical absolute paths to these managed files. The app does NOT directly read from arbitrary directories anymore.
+- **Managed Library**: `~/Pictures/Terra/YYYY/MM/` - Photos organized by date
+- **Archive**: `~/Pictures/Terra/Archive/` - Archived photos (14-day retention)
+- **Database**: `~/Library/Application Support/terra/photos.db`
 
-**File Access Flow**:
-1. User selects photos via dialog (frontend: `open()` from `@tauri-apps/plugin-dialog`)
-2. Backend: `upload_photos()` copies to managed library, extracts metadata, saves to DB
-3. Frontend: `loadPhotosFromDatabase()` fetches from DB, converts paths with `convertFileSrc()`
-4. Images load via Tauri's `asset://` protocol (configured in `tauri.conf.json`)
+### Key Data Flows
 
-### Metadata Extraction Pipeline
+**Photo Import**: User selects files → `upload_photos()` copies to library → extracts EXIF/GPS → computes content hash → computes dHash → detects screenshots → saves to DB
 
-Date extraction follows this priority order:
-1. **EXIF DateTimeOriginal/DateTime** (most accurate)
-2. **Filename parsing** (e.g., `2017-11-26_030858.jpeg` → Nov 26, 2017 3:05:58 AM)
-3. **File modified time** (fallback)
-4. **Current timestamp** (last resort, logs warning)
+**Metadata Extraction Priority**: EXIF DateTimeOriginal → Filename parsing (`YYYY-MM-DD_HHMMSS`) → File modified time → Current timestamp
 
-**Why this matters**: HEIC files often lack EXIF support, so filename parsing is critical. The regex pattern is: `(\d{4})[_-](\d{2})[_-](\d{2})` with optional `_(\d{2})(\d{2})(\d{2})` for time.
+**Duplicate Detection**: Exact matches via SHA-256 `content_hash`, similar photos via 64-bit perceptual `dhash_64` with Hamming distance threshold (default 10 bits)
 
-## Tauri v2 Asset Protocol Configuration
+**Screenshot Detection**: Filename patterns (`screenshot`, `screen shot`, `capture`, etc.) + device screen dimension matching (iPhone, Android, Mac resolutions)
 
-**Critical for image display**: `tauri.conf.json` must include:
+## Tauri v2 Configuration
+
+`tauri.conf.json` must include asset protocol scope for image display:
 ```json
 "security": {
   "assetProtocol": {
@@ -84,155 +84,85 @@ Date extraction follows this priority order:
 }
 ```
 
-This allows `convertFileSrc()` to access files in `~/Pictures/Terra/` and `~/Library/Application Support/terra/`. Without this, thumbnails won't load.
-
-## Common Modifications
-
-### Adding a New Tauri Command
+## Adding a New Tauri Command
 
 1. Add function to `src-tauri/src/lib.rs`:
 ```rust
 #[tauri::command]
 fn my_command(param: String) -> Result<String, String> {
-    Ok(format!("Received: {}", param))
+    let conn = db::init_database().map_err(|e| format!("Database error: {}", e))?;
+    // ... implementation
+    Ok(result)
 }
 ```
 
-2. Register in `run()` function:
+2. Register in `run()` function's `invoke_handler`:
 ```rust
 .invoke_handler(tauri::generate_handler![
-    scan_directory,
-    get_all_photos,
-    upload_photos,
-    my_command  // Add here
+    // ... existing commands
+    my_command
 ])
 ```
 
 3. Call from React:
 ```javascript
-import { invoke } from '@tauri-apps/api/core';
 const result = await invoke('my_command', { param: 'value' });
 ```
 
-### Modifying Database Schema
+## Modifying Database Schema
 
-1. Update schema in `src-tauri/src/db.rs` → `init_database()`
-2. Update `PhotoMetadata` struct in `src-tauri/src/lib.rs`
-3. Update query mapping in `get_all_photos()`
-4. **Important**: SQLite will auto-migrate with `CREATE TABLE IF NOT EXISTS`. For breaking changes, increment app version or add migration logic.
+1. Update schema in `db.rs` → `init_database()` - uses `ALTER TABLE ADD COLUMN` for migrations
+2. Update `PhotoMetadata` struct in `lib.rs`
+3. Update query mappings in relevant `get_*` functions
+4. Add index if needed for performance
 
-### Adding New Image Format Support
-
-1. Add extension to filter in `scan_directory()` and `upload_photos()`:
-```rust
-matches!(ext.as_str(), "jpg" | "jpeg" | "png" | "heic" | "webp" | "gif" | "bmp" | "tiff")
-```
-
-2. Ensure the `image` crate supports it (check `Cargo.toml` features if needed)
-
-## File Structure Details
-
-```
-src-tauri/
-├── src/
-│   ├── lib.rs          # Core logic: 350+ lines with 3 commands + metadata extraction
-│   ├── db.rs           # SQLite operations: 126 lines with 5 functions
-│   └── main.rs         # 7 lines, calls terra_lib::run()
-├── capabilities/
-│   └── default.json    # Tauri v2 permissions (dialog, shell, etc.)
-├── Cargo.toml          # Key deps: tauri v2, rusqlite, rexif, image, rayon, regex
-└── tauri.conf.json     # Must have assetProtocol scope for $PICTURE
-
-src/
-├── App.jsx             # 350+ lines: DitherBackground, PhotoModal, main App
-├── main.jsx            # React entry point
-└── index.css           # Tailwind imports + custom scrollbar styles
-```
-
-## Performance Considerations
-
-- **Parallel processing**: Uses `rayon` for multi-threaded photo processing (see `.par_iter()` in `upload_photos`)
-- **Lazy loading**: Images use `loading="lazy"` attribute
-- **Database indexing**: `date_taken` has descending index for fast chronological queries
-- **Asset protocol**: Tauri's zero-copy file serving via `asset://` URLs
-
-**Known limitation**: Virtual scrolling not implemented. For 50,000+ photos, the DOM will have performance issues. Future: integrate `react-window` or `react-virtualized`.
-
-## Image Path Handling
-
-**Critical distinction**:
-- **Rust side**: Paths must be canonical absolute paths (use `.canonicalize()`)
-- **React side**: Paths must be converted with `convertFileSrc(path)` to `asset://localhost/{id}`
-- **Database**: Stores canonical paths from Rust
-
-**Why canonicalize?**: Tauri's asset protocol requires absolute paths. Relative paths or symlinks will fail to load.
-
-## UI Components
-
-### DitherBackground Component
-- Canvas-based ASCII art with animated bubbles
-- 6-10 bubbles of varying sizes (20-80px radius)
-- Bubbles float upward and wrap around
-- Uses monospace font with character gradient: `" .:-=+*#%@"`
-
-### View Modes
-- **All Photos**: Single expandable group
-- **Years**: Groups by `date.getFullYear()`
-- **Months**: Groups by `date.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })`
-
-Photos are sorted chronologically (newest first) before grouping.
-
-## Debugging Tips
-
-1. **Thumbnails not loading**: Check Tauri console for `asset://` protocol errors. Verify `assetProtocol.scope` in `tauri.conf.json`.
-
-2. **EXIF date parsing fails**: Look for "Failed to parse EXIF datetime" in console. Check if filename parsing caught it instead.
-
-3. **Photos in wrong year/month folders**: The `upload_photos()` function creates folders based on `date_taken`. If date extraction failed, check the fallback chain.
-
-4. **First build after directory move fails**: Run `cd src-tauri && cargo clean` to clear cached build artifacts.
-
-5. **SQLite locked errors**: Database connection is created per-command. No connection pooling is used.
-
-## Dependencies Overview
+## Key Dependencies
 
 ### Rust (`src-tauri/Cargo.toml`)
-- `tauri = "2"` with `"protocol-asset"` feature (critical!)
-- `rusqlite = "0.32"` with `"bundled"` feature (includes SQLite binary)
+- `tauri = "2"` with `"protocol-asset"` feature
+- `rusqlite = "0.32"` with `"bundled"` feature
 - `rexif = "0.7"` - EXIF parsing
-- `image = "0.25"` - Image dimension detection
+- `image = "0.25"` - Image dimensions
+- `image_hasher = "2.0"` - Perceptual hashing (dHash)
+- `reverse_geocoder = "3.0"` - GPS to location names
 - `rayon = "1.10"` - Parallel processing
+- `sha2 = "0.10"` - Content hashing
 - `regex = "1"` - Filename date parsing
 - `chrono = "0.4"` - Date/time handling
+- `lazy_static = "1.4"` - Cached regex/geocoder
 
 ### JavaScript (`package.json`)
 - `@tauri-apps/api = "^2.0.0"` - Core Tauri APIs
 - `@tauri-apps/plugin-dialog = "^2.0.0"` - File picker
-- `react = "^18.2.0"` - UI framework
-- `lucide-react = "^0.294.0"` - Icon components
+- `react = "^18.2.0"`, `lucide-react`, `recharts`
 
-## Known Issues from README/Implementation Plan
+## Event System
 
-- First scan can be slow on very large directories (sequential file ops)
-- HEIC EXIF support is unreliable (hence filename parsing was added)
-- Some EXIF formats may not parse correctly (depends on `rexif` library)
-- Virtual scrolling needed for 50,000+ photos
-- Cloud import buttons are UI-only placeholders
+Backend emits progress events for long-running operations:
+- `scan_progress` - Duplicate scanning progress
+- `screenshot_scan_progress` - Screenshot detection progress
+- `file_size_progress` - File size population progress
 
-## Testing Workflow
+Listen in frontend:
+```javascript
+const unlisten = await listen('scan_progress', (event) => {
+  // event.payload: { total, processed, phase }
+});
+```
 
-1. Start app: `npm run tauri:dev`
-2. Click "Upload Photos" button
-3. Select images from a directory
-4. Verify they appear in the correct year/month groups
-5. Check `~/Pictures/Terra/YYYY/MM/` to confirm files were copied
-6. Check console logs for date extraction method used
+## Performance Notes
 
-## Planned Features (from IMPLEMENTATION_PLAN.md)
+- Uses `rayon` for parallel photo processing (`.par_iter()`)
+- Lazy loading with `loading="lazy"` on images
+- `lazy_static!` for cached regex patterns and geocoder data
+- Database indexes on frequently queried columns
+- DitherBackground uses throttled animation (24 FPS) with visibility-based pausing
 
-- Virtual scrolling with react-window
-- Search and filtering
-- Favorites and collections
-- iCloud/Google Photos integration
-- Video support
-- Basic editing (rotate, crop)
+**Known Limitation**: No virtual scrolling. DOM performance degrades with 50,000+ photos. Future: integrate `react-window`.
+
+## Debugging
+
+1. **Thumbnails not loading**: Check `assetProtocol.scope` in `tauri.conf.json`, verify canonical paths
+2. **EXIF date parsing fails**: Check console for "Failed to parse EXIF datetime" - filename parsing should catch it
+3. **Build fails after directory move**: Run `cd src-tauri && cargo clean`
+4. **Video playback issues**: Check codec support, MOV/MP4 should work natively

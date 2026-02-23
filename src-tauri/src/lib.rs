@@ -61,7 +61,7 @@ pub struct PhotoMetadata {
 }
 
 /// Parse EXIF DateTimeOriginal field (format: "2023:01:15 14:30:45")
-fn parse_exif_datetime(datetime_str: &str) -> Option<i64> {
+pub(crate) fn parse_exif_datetime(datetime_str: &str) -> Option<i64> {
     // Trim null terminators and whitespace that can appear in EXIF strings
     let datetime_str = datetime_str.trim_end_matches('\0').trim();
 
@@ -87,7 +87,7 @@ fn parse_exif_datetime(datetime_str: &str) -> Option<i64> {
 }
 
 /// Try to extract date from filename (e.g., "2017-11-26_030858.jpeg")
-fn parse_filename_date(filename: &str) -> Option<i64> {
+pub(crate) fn parse_filename_date(filename: &str) -> Option<i64> {
     // Use cached regex patterns for better performance
     if let Some(caps) = DATE_REGEX.captures(filename) {
         let year: i32 = caps.get(1)?.as_str().parse().ok()?;
@@ -334,7 +334,7 @@ fn process_image(path: &Path, geocoder: Option<&ReverseGeocoder>) -> Option<Phot
     })
 }
 
-fn is_video(path: &Path) -> bool {
+pub(crate) fn is_video(path: &Path) -> bool {
     path.extension()
         .and_then(|s| s.to_str())
         .map(|ext| matches!(ext.to_lowercase().as_str(), "mp4" | "mov" | "avi" | "webm" | "mkv"))
@@ -681,12 +681,12 @@ fn compute_dhash(path: &Path) -> Option<u64> {
 }
 
 /// Calculate Hamming distance between two hashes
-fn hamming_distance(hash1: u64, hash2: u64) -> u32 {
+pub(crate) fn hamming_distance(hash1: u64, hash2: u64) -> u32 {
     (hash1 ^ hash2).count_ones()
 }
 
 /// Check if an image is likely a screenshot based on heuristics
-fn detect_screenshot(name: &str, width: u32, height: u32) -> bool {
+pub(crate) fn detect_screenshot(name: &str, width: u32, height: u32) -> bool {
     // Check filename patterns
     if SCREENSHOT_REGEX.is_match(name) {
         return true;
@@ -1436,4 +1436,184 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    // ========================================================================
+    // parse_exif_datetime tests
+    // ========================================================================
+
+    #[test]
+    fn test_parse_exif_datetime_standard_format() {
+        let result = parse_exif_datetime("2023:01:15 14:30:45");
+        assert!(result.is_some());
+        // Verify the timestamp corresponds to 2023-01-15 14:30:45 UTC
+        let expected = chrono::NaiveDateTime::parse_from_str(
+            "2023-01-15 14:30:45",
+            "%Y-%m-%d %H:%M:%S",
+        )
+        .unwrap()
+        .and_utc()
+        .timestamp();
+        assert_eq!(result.unwrap(), expected);
+    }
+
+    #[test]
+    fn test_parse_exif_datetime_with_null_terminator() {
+        let result = parse_exif_datetime("2023:01:15 14:30:45\0");
+        assert!(result.is_some());
+        let expected = chrono::NaiveDateTime::parse_from_str(
+            "2023-01-15 14:30:45",
+            "%Y-%m-%d %H:%M:%S",
+        )
+        .unwrap()
+        .and_utc()
+        .timestamp();
+        assert_eq!(result.unwrap(), expected);
+    }
+
+    #[test]
+    fn test_parse_exif_datetime_invalid_input() {
+        assert!(parse_exif_datetime("not a date").is_none());
+    }
+
+    #[test]
+    fn test_parse_exif_datetime_empty_string() {
+        assert!(parse_exif_datetime("").is_none());
+    }
+
+    // ========================================================================
+    // parse_filename_date tests
+    // ========================================================================
+
+    #[test]
+    fn test_parse_filename_date_with_time() {
+        let result = parse_filename_date("2017-11-26_030858.jpeg");
+        assert!(result.is_some());
+        let expected = chrono::NaiveDateTime::parse_from_str(
+            "2017-11-26 03:08:58",
+            "%Y-%m-%d %H:%M:%S",
+        )
+        .unwrap()
+        .and_utc()
+        .timestamp();
+        assert_eq!(result.unwrap(), expected);
+    }
+
+    #[test]
+    fn test_parse_filename_date_with_underscores() {
+        let result = parse_filename_date("IMG_2023_06_15.jpg");
+        assert!(result.is_some());
+        let expected = chrono::NaiveDateTime::parse_from_str(
+            "2023-06-15 00:00:00",
+            "%Y-%m-%d %H:%M:%S",
+        )
+        .unwrap()
+        .and_utc()
+        .timestamp();
+        assert_eq!(result.unwrap(), expected);
+    }
+
+    #[test]
+    fn test_parse_filename_date_no_date() {
+        assert!(parse_filename_date("random_photo.jpg").is_none());
+    }
+
+    #[test]
+    fn test_parse_filename_date_year_out_of_range() {
+        assert!(parse_filename_date("1800-01-01.jpg").is_none());
+    }
+
+    // ========================================================================
+    // hamming_distance tests
+    // ========================================================================
+
+    #[test]
+    fn test_hamming_distance_identical() {
+        assert_eq!(hamming_distance(0, 0), 0);
+    }
+
+    #[test]
+    fn test_hamming_distance_one_bit() {
+        assert_eq!(hamming_distance(0, 1), 1);
+    }
+
+    #[test]
+    fn test_hamming_distance_all_different() {
+        assert_eq!(hamming_distance(0, u64::MAX), 64);
+    }
+
+    #[test]
+    fn test_hamming_distance_threshold_boundary() {
+        // 0b1111111111 has exactly 10 bits set, so distance from 0 is 10
+        let hash_with_10_bits: u64 = 0b1111111111;
+        assert_eq!(hamming_distance(0, hash_with_10_bits), 10);
+    }
+
+    // ========================================================================
+    // detect_screenshot tests
+    // ========================================================================
+
+    #[test]
+    fn test_detect_screenshot_by_filename_lowercase() {
+        assert!(detect_screenshot("screenshot_2023.png", 800, 600));
+    }
+
+    #[test]
+    fn test_detect_screenshot_by_filename_screen_shot() {
+        assert!(detect_screenshot("Screen Shot 2023.png", 800, 600));
+    }
+
+    #[test]
+    fn test_detect_screenshot_by_filename_capture() {
+        assert!(detect_screenshot("capture_01.png", 800, 600));
+    }
+
+    #[test]
+    fn test_detect_screenshot_by_iphone_dimensions() {
+        assert!(detect_screenshot("IMG_0001.png", 1170, 2532));
+    }
+
+    #[test]
+    fn test_detect_screenshot_by_mac_dimensions() {
+        assert!(detect_screenshot("IMG_0002.png", 2560, 1600));
+    }
+
+    #[test]
+    fn test_detect_screenshot_normal_photo_dimensions() {
+        assert!(!detect_screenshot("photo.jpg", 4000, 3000));
+    }
+
+    #[test]
+    fn test_detect_screenshot_normal_photo_name_normal_dims() {
+        assert!(!detect_screenshot("vacation_trip.jpg", 3024, 4032));
+    }
+
+    // ========================================================================
+    // is_video tests
+    // ========================================================================
+
+    #[test]
+    fn test_is_video_mp4() {
+        assert!(is_video(Path::new("video.mp4")));
+    }
+
+    #[test]
+    fn test_is_video_mov_uppercase() {
+        assert!(is_video(Path::new("clip.MOV")));
+    }
+
+    #[test]
+    fn test_is_video_jpg_not_video() {
+        assert!(!is_video(Path::new("photo.jpg")));
+    }
+
+    #[test]
+    fn test_is_video_no_extension() {
+        assert!(!is_video(Path::new("noextension")));
+    }
 }

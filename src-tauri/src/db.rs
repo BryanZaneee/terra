@@ -31,11 +31,9 @@ pub fn get_library_path() -> PathBuf {
     path
 }
 
-/// Initialize the database and create tables if they don't exist
-pub fn init_database() -> SqlResult<Connection> {
-    let db_path = get_db_path();
-    let conn = Connection::open(db_path)?;
-
+/// Initialize schema on an existing connection.
+/// Used by both init_database() and tests (with in-memory DBs).
+pub fn init_schema(conn: &Connection) -> SqlResult<()> {
     conn.execute(
         "CREATE TABLE IF NOT EXISTS photos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -180,6 +178,14 @@ pub fn init_database() -> SqlResult<Connection> {
         [],
     )?;
 
+    Ok(())
+}
+
+/// Initialize the database and create tables if they don't exist
+pub fn init_database() -> SqlResult<Connection> {
+    let db_path = get_db_path();
+    let conn = Connection::open(db_path)?;
+    init_schema(&conn)?;
     Ok(conn)
 }
 
@@ -227,6 +233,23 @@ pub fn insert_photo(conn: &Connection, photo: &PhotoMetadata, source_type: &str)
     Ok(())
 }
 
+/// Map a row (with the standard 10-column SELECT) into a PhotoMetadata.
+/// Expected column order: path, name, date_taken, width, height, is_favorite, content_hash, latitude, longitude, location_name
+fn photo_from_row(row: &rusqlite::Row) -> rusqlite::Result<PhotoMetadata> {
+    Ok(PhotoMetadata {
+        path: row.get(0)?,
+        name: row.get(1)?,
+        date_taken: row.get(2)?,
+        width: row.get(3)?,
+        height: row.get(4)?,
+        is_favorite: row.get::<_, i32>(5)? != 0,
+        content_hash: row.get(6)?,
+        latitude: row.get(7)?,
+        longitude: row.get(8)?,
+        location_name: row.get(9)?,
+    })
+}
+
 /// Get all photos from the database, sorted by date_taken descending
 pub fn get_all_photos(conn: &Connection) -> SqlResult<Vec<PhotoMetadata>> {
     let mut stmt = conn.prepare(
@@ -234,20 +257,7 @@ pub fn get_all_photos(conn: &Connection) -> SqlResult<Vec<PhotoMetadata>> {
          FROM photos ORDER BY date_taken DESC"
     )?;
 
-    let photos = stmt.query_map([], |row| {
-        Ok(PhotoMetadata {
-            path: row.get(0)?,
-            name: row.get(1)?,
-            date_taken: row.get(2)?,
-            width: row.get(3)?,
-            height: row.get(4)?,
-            is_favorite: row.get::<_, i32>(5)? != 0,
-            content_hash: row.get(6)?,
-            latitude: row.get(7)?,
-            longitude: row.get(8)?,
-            location_name: row.get(9)?,
-        })
-    })?;
+    let photos = stmt.query_map([], |row| photo_from_row(row))?;
 
     let mut result = Vec::new();
     for photo in photos {
@@ -377,20 +387,7 @@ pub fn get_album_photos(conn: &Connection, album_id: i64) -> SqlResult<Vec<Photo
          ORDER BY p.date_taken DESC"
     )?;
 
-    let photos = stmt.query_map(params![album_id], |row| {
-        Ok(PhotoMetadata {
-            path: row.get(0)?,
-            name: row.get(1)?,
-            date_taken: row.get(2)?,
-            width: row.get(3)?,
-            height: row.get(4)?,
-            is_favorite: row.get::<_, i32>(5)? != 0,
-            content_hash: row.get(6)?,
-            latitude: row.get(7)?,
-            longitude: row.get(8)?,
-            location_name: row.get(9)?,
-        })
-    })?;
+    let photos = stmt.query_map(params![album_id], |row| photo_from_row(row))?;
 
     let mut result = Vec::new();
     for photo in photos {
@@ -419,20 +416,7 @@ pub fn get_duplicates(conn: &Connection) -> SqlResult<Vec<PhotoMetadata>> {
          ORDER BY content_hash, date_taken DESC"
     )?;
 
-    let photos = stmt.query_map([], |row| {
-        Ok(PhotoMetadata {
-            path: row.get(0)?,
-            name: row.get(1)?,
-            date_taken: row.get(2)?,
-            width: row.get(3)?,
-            height: row.get(4)?,
-            is_favorite: row.get::<_, i32>(5)? != 0,
-            content_hash: row.get(6)?,
-            latitude: row.get(7)?,
-            longitude: row.get(8)?,
-            location_name: row.get(9)?,
-        })
-    })?;
+    let photos = stmt.query_map([], |row| photo_from_row(row))?;
 
     let mut result = Vec::new();
     for photo in photos {
@@ -451,20 +435,7 @@ pub fn search_photos(conn: &Connection, query: &str) -> SqlResult<Vec<PhotoMetad
          ORDER BY date_taken DESC"
     )?;
 
-    let photos = stmt.query_map(params![search_term], |row| {
-        Ok(PhotoMetadata {
-            path: row.get(0)?,
-            name: row.get(1)?,
-            date_taken: row.get(2)?,
-            width: row.get(3)?,
-            height: row.get(4)?,
-            is_favorite: row.get::<_, i32>(5)? != 0,
-            content_hash: row.get(6)?,
-            latitude: row.get(7)?,
-            longitude: row.get(8)?,
-            location_name: row.get(9)?,
-        })
-    })?;
+    let photos = stmt.query_map(params![search_term], |row| photo_from_row(row))?;
 
     let mut result = Vec::new();
     for photo in photos {
@@ -572,20 +543,7 @@ pub fn get_screenshots(conn: &Connection) -> SqlResult<Vec<PhotoMetadata>> {
          FROM photos WHERE is_screenshot = 1 AND archived_at IS NULL ORDER BY date_taken DESC"
     )?;
 
-    let photos = stmt.query_map([], |row| {
-        Ok(PhotoMetadata {
-            path: row.get(0)?,
-            name: row.get(1)?,
-            date_taken: row.get(2)?,
-            width: row.get(3)?,
-            height: row.get(4)?,
-            is_favorite: row.get::<_, i32>(5)? != 0,
-            content_hash: row.get(6)?,
-            latitude: row.get(7)?,
-            longitude: row.get(8)?,
-            location_name: row.get(9)?,
-        })
-    })?;
+    let photos = stmt.query_map([], |row| photo_from_row(row))?;
 
     let mut result = Vec::new();
     for photo in photos {
@@ -621,18 +579,7 @@ pub fn get_archived_photos(conn: &Connection) -> SqlResult<Vec<(PhotoMetadata, i
     )?;
 
     let photos = stmt.query_map([], |row| {
-        let photo = PhotoMetadata {
-            path: row.get(0)?,
-            name: row.get(1)?,
-            date_taken: row.get(2)?,
-            width: row.get(3)?,
-            height: row.get(4)?,
-            is_favorite: row.get::<_, i32>(5)? != 0,
-            content_hash: row.get(6)?,
-            latitude: row.get(7)?,
-            longitude: row.get(8)?,
-            location_name: row.get(9)?,
-        };
+        let photo = photo_from_row(row)?;
         let archived_at: i64 = row.get(10)?;
         Ok((photo, archived_at))
     })?;
@@ -693,20 +640,7 @@ pub fn get_unreviewed_photos(conn: &Connection) -> SqlResult<Vec<PhotoMetadata>>
          FROM photos WHERE reviewed_at IS NULL AND archived_at IS NULL ORDER BY date_taken DESC"
     )?;
 
-    let photos = stmt.query_map([], |row| {
-        Ok(PhotoMetadata {
-            path: row.get(0)?,
-            name: row.get(1)?,
-            date_taken: row.get(2)?,
-            width: row.get(3)?,
-            height: row.get(4)?,
-            is_favorite: row.get::<_, i32>(5)? != 0,
-            content_hash: row.get(6)?,
-            latitude: row.get(7)?,
-            longitude: row.get(8)?,
-            location_name: row.get(9)?,
-        })
-    })?;
+    let photos = stmt.query_map([], |row| photo_from_row(row))?;
 
     let mut result = Vec::new();
     for photo in photos {
@@ -897,20 +831,7 @@ pub fn get_photos_by_tags(conn: &Connection, tag_ids: &[i64], match_all: bool) -
         params_vec.push(Box::new(tag_ids.len() as i64));
     }
 
-    let photos = stmt.query_map(rusqlite::params_from_iter(params_vec.iter().map(|p| p.as_ref())), |row| {
-        Ok(PhotoMetadata {
-            path: row.get(0)?,
-            name: row.get(1)?,
-            date_taken: row.get(2)?,
-            width: row.get(3)?,
-            height: row.get(4)?,
-            is_favorite: row.get::<_, i32>(5)? != 0,
-            content_hash: row.get(6)?,
-            latitude: row.get(7)?,
-            longitude: row.get(8)?,
-            location_name: row.get(9)?,
-        })
-    })?;
+    let photos = stmt.query_map(rusqlite::params_from_iter(params_vec.iter().map(|p| p.as_ref())), |row| photo_from_row(row))?;
 
     let mut result = Vec::new();
     for photo in photos {
@@ -1165,20 +1086,7 @@ pub fn get_smart_collection_photos(conn: &Connection, collection_id: &str) -> Sq
 }
 
 fn query_photos<P: rusqlite::Params>(stmt: &mut rusqlite::Statement, params: P) -> SqlResult<Vec<PhotoMetadata>> {
-    let photos = stmt.query_map(params, |row| {
-        Ok(PhotoMetadata {
-            path: row.get(0)?,
-            name: row.get(1)?,
-            date_taken: row.get(2)?,
-            width: row.get(3)?,
-            height: row.get(4)?,
-            is_favorite: row.get::<_, i32>(5)? != 0,
-            content_hash: row.get(6)?,
-            latitude: row.get(7)?,
-            longitude: row.get(8)?,
-            location_name: row.get(9)?,
-        })
-    })?;
+    let photos = stmt.query_map(params, |row| photo_from_row(row))?;
 
     let mut result = Vec::new();
     for photo in photos {
@@ -1401,4 +1309,353 @@ pub fn get_photos_without_file_size(conn: &Connection) -> SqlResult<Vec<String>>
         result.push(path?);
     }
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Helper to create a PhotoMetadata for testing
+    fn test_photo(path: &str, name: &str) -> PhotoMetadata {
+        PhotoMetadata {
+            path: path.to_string(),
+            name: name.to_string(),
+            date_taken: 1700000000,
+            width: 1920,
+            height: 1080,
+            is_favorite: false,
+            content_hash: Some("abc123".to_string()),
+            latitude: None,
+            longitude: None,
+            location_name: None,
+        }
+    }
+
+    /// Helper to create an in-memory database with schema initialized
+    fn setup_db() -> Connection {
+        let conn = Connection::open_in_memory().expect("Failed to open in-memory database");
+        init_schema(&conn).expect("Failed to initialize schema");
+        conn
+    }
+
+    // ====================================================================
+    // Photos tests
+    // ====================================================================
+
+    #[test]
+    fn test_insert_and_get_all_photos() {
+        let conn = setup_db();
+        let photo = test_photo("/photos/test.jpg", "test.jpg");
+        insert_photo(&conn, &photo, "upload").unwrap();
+
+        let photos = get_all_photos(&conn).unwrap();
+        assert_eq!(photos.len(), 1);
+        assert_eq!(photos[0].path, "/photos/test.jpg");
+        assert_eq!(photos[0].name, "test.jpg");
+        assert_eq!(photos[0].date_taken, 1700000000);
+    }
+
+    #[test]
+    fn test_photo_exists_true_for_inserted() {
+        let conn = setup_db();
+        let photo = test_photo("/photos/exists.jpg", "exists.jpg");
+        insert_photo(&conn, &photo, "upload").unwrap();
+
+        assert!(photo_exists(&conn, "/photos/exists.jpg").unwrap());
+    }
+
+    #[test]
+    fn test_photo_exists_false_for_missing() {
+        let conn = setup_db();
+        assert!(!photo_exists(&conn, "/photos/missing.jpg").unwrap());
+    }
+
+    #[test]
+    fn test_delete_photo() {
+        let conn = setup_db();
+        let photo = test_photo("/photos/delete_me.jpg", "delete_me.jpg");
+        insert_photo(&conn, &photo, "upload").unwrap();
+        assert!(photo_exists(&conn, "/photos/delete_me.jpg").unwrap());
+
+        delete_photo(&conn, "/photos/delete_me.jpg").unwrap();
+        assert!(!photo_exists(&conn, "/photos/delete_me.jpg").unwrap());
+    }
+
+    #[test]
+    fn test_search_photos_by_name() {
+        let conn = setup_db();
+        let photo = test_photo("/photos/sunset_beach.jpg", "sunset_beach.jpg");
+        insert_photo(&conn, &photo, "upload").unwrap();
+
+        let results = search_photos(&conn, "sunset").unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "sunset_beach.jpg");
+    }
+
+    #[test]
+    fn test_search_photos_by_location() {
+        let conn = setup_db();
+        let mut photo = test_photo("/photos/trip.jpg", "trip.jpg");
+        photo.location_name = Some("San Francisco, California".to_string());
+        insert_photo(&conn, &photo, "upload").unwrap();
+
+        let results = search_photos(&conn, "San Francisco").unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].location_name.as_deref(), Some("San Francisco, California"));
+    }
+
+    #[test]
+    fn test_get_photo_count() {
+        let conn = setup_db();
+        assert_eq!(get_photo_count(&conn).unwrap(), 0);
+
+        insert_photo(&conn, &test_photo("/photos/a.jpg", "a.jpg"), "upload").unwrap();
+        insert_photo(&conn, &test_photo("/photos/b.jpg", "b.jpg"), "upload").unwrap();
+        assert_eq!(get_photo_count(&conn).unwrap(), 2);
+    }
+
+    // ====================================================================
+    // Favorites tests
+    // ====================================================================
+
+    #[test]
+    fn test_set_photo_favorite_on() {
+        let conn = setup_db();
+        let photo = test_photo("/photos/fav.jpg", "fav.jpg");
+        insert_photo(&conn, &photo, "upload").unwrap();
+
+        set_photo_favorite(&conn, "/photos/fav.jpg", true).unwrap();
+        let photos = get_all_photos(&conn).unwrap();
+        assert!(photos[0].is_favorite);
+    }
+
+    #[test]
+    fn test_set_photo_favorite_toggle_off() {
+        let conn = setup_db();
+        let photo = test_photo("/photos/fav2.jpg", "fav2.jpg");
+        insert_photo(&conn, &photo, "upload").unwrap();
+
+        set_photo_favorite(&conn, "/photos/fav2.jpg", true).unwrap();
+        set_photo_favorite(&conn, "/photos/fav2.jpg", false).unwrap();
+        let photos = get_all_photos(&conn).unwrap();
+        assert!(!photos[0].is_favorite);
+    }
+
+    // ====================================================================
+    // Albums tests
+    // ====================================================================
+
+    #[test]
+    fn test_create_album_and_get_albums() {
+        let conn = setup_db();
+        let album_id = create_album(&conn, "Vacation").unwrap();
+        assert!(album_id > 0);
+
+        let albums = get_albums(&conn).unwrap();
+        assert_eq!(albums.len(), 1);
+        assert_eq!(albums[0].name, "Vacation");
+        assert_eq!(albums[0].count, 0);
+    }
+
+    #[test]
+    fn test_add_photo_to_album_and_get_album_photos() {
+        let conn = setup_db();
+        let photo = test_photo("/photos/album_pic.jpg", "album_pic.jpg");
+        insert_photo(&conn, &photo, "upload").unwrap();
+
+        let album_id = create_album(&conn, "Trip").unwrap();
+        add_photo_to_album(&conn, album_id, "/photos/album_pic.jpg").unwrap();
+
+        let photos = get_album_photos(&conn, album_id).unwrap();
+        assert_eq!(photos.len(), 1);
+        assert_eq!(photos[0].path, "/photos/album_pic.jpg");
+    }
+
+    #[test]
+    fn test_remove_photo_from_album() {
+        let conn = setup_db();
+        let photo = test_photo("/photos/remove_me.jpg", "remove_me.jpg");
+        insert_photo(&conn, &photo, "upload").unwrap();
+
+        let album_id = create_album(&conn, "Temp").unwrap();
+        add_photo_to_album(&conn, album_id, "/photos/remove_me.jpg").unwrap();
+        assert_eq!(get_album_photos(&conn, album_id).unwrap().len(), 1);
+
+        remove_photo_from_album(&conn, album_id, "/photos/remove_me.jpg").unwrap();
+        assert_eq!(get_album_photos(&conn, album_id).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn test_delete_album_cascade() {
+        let conn = setup_db();
+        let photo = test_photo("/photos/cascade.jpg", "cascade.jpg");
+        insert_photo(&conn, &photo, "upload").unwrap();
+
+        let album_id = create_album(&conn, "ToDelete").unwrap();
+        add_photo_to_album(&conn, album_id, "/photos/cascade.jpg").unwrap();
+
+        delete_album(&conn, album_id).unwrap();
+        let albums = get_albums(&conn).unwrap();
+        assert_eq!(albums.len(), 0);
+    }
+
+    #[test]
+    fn test_set_album_cover() {
+        let conn = setup_db();
+        let photo = test_photo("/photos/cover.jpg", "cover.jpg");
+        insert_photo(&conn, &photo, "upload").unwrap();
+
+        let album_id = create_album(&conn, "WithCover").unwrap();
+        set_album_cover(&conn, album_id, "/photos/cover.jpg").unwrap();
+
+        let albums = get_albums(&conn).unwrap();
+        assert_eq!(albums[0].cover_photo_path.as_deref(), Some("/photos/cover.jpg"));
+    }
+
+    // ====================================================================
+    // Tags tests
+    // ====================================================================
+
+    #[test]
+    fn test_create_tag_and_get_all_tags() {
+        let conn = setup_db();
+        let tag_id = create_tag(&conn, "nature", "#00ff00").unwrap();
+        assert!(tag_id > 0);
+
+        let tags = get_all_tags(&conn).unwrap();
+        assert_eq!(tags.len(), 1);
+        assert_eq!(tags[0].name, "nature");
+        assert_eq!(tags[0].color, "#00ff00");
+        assert_eq!(tags[0].count, 0);
+    }
+
+    #[test]
+    fn test_update_tag() {
+        let conn = setup_db();
+        let tag_id = create_tag(&conn, "old_name", "#000000").unwrap();
+
+        update_tag(&conn, tag_id, "new_name", "#ff0000").unwrap();
+
+        let tags = get_all_tags(&conn).unwrap();
+        assert_eq!(tags[0].name, "new_name");
+        assert_eq!(tags[0].color, "#ff0000");
+    }
+
+    #[test]
+    fn test_delete_tag() {
+        let conn = setup_db();
+        let tag_id = create_tag(&conn, "temporary", "#123456").unwrap();
+        assert_eq!(get_all_tags(&conn).unwrap().len(), 1);
+
+        delete_tag(&conn, tag_id).unwrap();
+        assert_eq!(get_all_tags(&conn).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn test_add_tags_to_photos_and_get_tags_for_photo() {
+        let conn = setup_db();
+        let photo = test_photo("/photos/tagged.jpg", "tagged.jpg");
+        insert_photo(&conn, &photo, "upload").unwrap();
+
+        let tag_id = create_tag(&conn, "landscape", "#0000ff").unwrap();
+        add_tags_to_photos(&conn, &[tag_id], &["/photos/tagged.jpg".to_string()]).unwrap();
+
+        let tags = get_tags_for_photo(&conn, "/photos/tagged.jpg").unwrap();
+        assert_eq!(tags.len(), 1);
+        assert_eq!(tags[0].name, "landscape");
+    }
+
+    #[test]
+    fn test_remove_tag_from_photo() {
+        let conn = setup_db();
+        let photo = test_photo("/photos/untag.jpg", "untag.jpg");
+        insert_photo(&conn, &photo, "upload").unwrap();
+
+        let tag_id = create_tag(&conn, "removable", "#aabbcc").unwrap();
+        add_tags_to_photos(&conn, &[tag_id], &["/photos/untag.jpg".to_string()]).unwrap();
+        assert_eq!(get_tags_for_photo(&conn, "/photos/untag.jpg").unwrap().len(), 1);
+
+        remove_tag_from_photo(&conn, tag_id, "/photos/untag.jpg").unwrap();
+        assert_eq!(get_tags_for_photo(&conn, "/photos/untag.jpg").unwrap().len(), 0);
+    }
+
+    // ====================================================================
+    // Archive tests
+    // ====================================================================
+
+    #[test]
+    fn test_archive_photo() {
+        let conn = setup_db();
+        let photo = test_photo("/photos/archive_me.jpg", "archive_me.jpg");
+        insert_photo(&conn, &photo, "upload").unwrap();
+
+        archive_photo(&conn, "/photos/archive_me.jpg").unwrap();
+
+        let archived = get_archived_photos(&conn).unwrap();
+        assert_eq!(archived.len(), 1);
+        assert_eq!(archived[0].0.path, "/photos/archive_me.jpg");
+    }
+
+    #[test]
+    fn test_restore_photo() {
+        let conn = setup_db();
+        let photo = test_photo("/photos/restore_me.jpg", "restore_me.jpg");
+        insert_photo(&conn, &photo, "upload").unwrap();
+
+        archive_photo(&conn, "/photos/restore_me.jpg").unwrap();
+        assert_eq!(get_archived_photos(&conn).unwrap().len(), 1);
+
+        restore_photo(&conn, "/photos/restore_me.jpg").unwrap();
+        assert_eq!(get_archived_photos(&conn).unwrap().len(), 0);
+    }
+
+    // ====================================================================
+    // TerraForm Review tests
+    // ====================================================================
+
+    #[test]
+    fn test_mark_photo_reviewed_drops_unreviewed_count() {
+        let conn = setup_db();
+        let photo = test_photo("/photos/review.jpg", "review.jpg");
+        insert_photo(&conn, &photo, "upload").unwrap();
+
+        let initial_count = get_unreviewed_count(&conn).unwrap();
+        assert_eq!(initial_count, 1);
+
+        mark_photo_reviewed(&conn, "/photos/review.jpg").unwrap();
+        let after_count = get_unreviewed_count(&conn).unwrap();
+        assert_eq!(after_count, 0);
+    }
+
+    #[test]
+    fn test_unmark_photo_reviewed_restores_count() {
+        let conn = setup_db();
+        let photo = test_photo("/photos/unreview.jpg", "unreview.jpg");
+        insert_photo(&conn, &photo, "upload").unwrap();
+
+        mark_photo_reviewed(&conn, "/photos/unreview.jpg").unwrap();
+        assert_eq!(get_unreviewed_count(&conn).unwrap(), 0);
+
+        unmark_photo_reviewed(&conn, "/photos/unreview.jpg").unwrap();
+        assert_eq!(get_unreviewed_count(&conn).unwrap(), 1);
+    }
+
+    // ====================================================================
+    // Settings tests
+    // ====================================================================
+
+    #[test]
+    fn test_get_setting_returns_none_for_missing_key() {
+        let conn = setup_db();
+        assert!(get_setting(&conn, "nonexistent_key").is_none());
+    }
+
+    #[test]
+    fn test_set_and_get_setting_round_trip() {
+        let conn = setup_db();
+        set_setting(&conn, "theme", "dark").unwrap();
+
+        let value = get_setting(&conn, "theme");
+        assert_eq!(value.as_deref(), Some("dark"));
+    }
 }
