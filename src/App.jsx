@@ -22,7 +22,7 @@ import TerraFormReview from './components/TerraFormReview';
 
 import { AppProvider, useAppContext } from './contexts/AppContext';
 import { ViewProvider, useViewContext } from './contexts/ViewContext';
-import { SelectionProvider, useSelectionContext } from './contexts/SelectionContext';
+import { useSelection } from './hooks/useSelection';
 
 const AppLayout = () => {
   const {
@@ -48,7 +48,7 @@ const AppLayout = () => {
   const {
     viewMode, setViewMode, searchQuery, handleSearch,
     smartCollections, loadSmartCollections,
-    groupedPhotos, expandedGroups, toggleGroup,
+    groupedPhotos, flatVisiblePhotos, expandedGroups, toggleGroup,
     unreviewedCount, setUnreviewedCount,
     loadLocations,
   } = useViewContext();
@@ -56,7 +56,7 @@ const AppLayout = () => {
   const {
     selectedPhotos, selectionMode, setSelectionMode,
     toggleSelection, handlePhotoClick, clearSelection,
-  } = useSelectionContext();
+  } = useSelection(flatVisiblePhotos);
 
   // Local modal state
   const [selectedPhoto, setSelectedPhoto] = useState(null);
@@ -262,9 +262,7 @@ const App = () => (
   <ErrorBoundary>
     <AppProvider>
       <ViewProvider>
-        <SelectionProvider>
-          <AppLayout />
-        </SelectionProvider>
+        <AppLayout />
       </ViewProvider>
     </AppProvider>
   </ErrorBoundary>

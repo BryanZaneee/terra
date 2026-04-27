@@ -47,8 +47,8 @@ The plan has 6 items, executed in order: A → B → C → D → E → F.
 | A | Polish OSS metadata | done | 3fa1d68 |
 | B | Tighten asset protocol scope | done | 3fa1d68 |
 | C | `with_db` helper, drop boilerplate | done | ad35178 |
-| D | Extract `media.rs` from `lib.rs` | done | (next commit) |
-| E | Collapse trivial hooks and `SelectionContext` | pending | — |
+| D | Extract `media.rs` from `lib.rs` | done | e5f8b10 |
+| E | Collapse trivial hooks and `SelectionContext` | done | (next commit) |
 | F | Extract `groupPhotos` utility, collapse `ViewContext` effects | pending | — |
 
 Detailed entries are appended below as each item lands.
@@ -189,3 +189,45 @@ a static lookup table — saves an allocation per call.
 **Verification.** `cargo test`: 48 tests pass (24 of them moved from
 `lib.rs::tests` into `media::tests`; the rest are `db::tests`). `cargo
 check` clean except the pre-existing 4 dead-code warnings.
+
+---
+
+### E — Collapse trivial hooks and SelectionContext (2026-04-26)
+
+The frontend had three layering choices that added indirection without
+value, all flagged in the audit:
+
+- `src/hooks/useTags.js` (23 lines) — `useState + invoke('get_all_tags')`.
+- `src/hooks/useAlbums.js` (43 lines) — three thin async wrappers around
+  invoke calls.
+- `src/contexts/SelectionContext.jsx` (16 lines) — a context that wrapped
+  one hook (`useSelection`) and exposed it to maybe two components.
+
+**Change.**
+
+- `useTags.js` and `useAlbums.js`: deleted. State and handlers folded
+  directly into `AppContext.jsx`. `AppContext.jsx` grew from 45 to 89
+  lines but it's now the single place all the cross-cutting state lives.
+- `SelectionContext.jsx`: deleted. `AppLayout` now calls
+  `useSelection(flatVisiblePhotos)` itself — `flatVisiblePhotos` already
+  comes from `useViewContext`. `App.jsx`'s provider stack drops from
+  `App > Error > AppProvider > ViewProvider > SelectionProvider > Layout`
+  to `App > Error > AppProvider > ViewProvider > Layout`.
+- Test files for the deleted hooks (`useTags.test.js`, `useAlbums.test.js`)
+  also deleted. They were testing the hook's own API surface, not real
+  user-visible behavior — the latter is covered by `App.test.jsx`.
+- `useSelection.js` is kept; it has real shift/cmd-click range-selection
+  logic and its dedicated tests are preserved.
+
+**Files removed.**
+- `src/hooks/useTags.js`, `src/hooks/useTags.test.js`
+- `src/hooks/useAlbums.js`, `src/hooks/useAlbums.test.js`
+- `src/contexts/SelectionContext.jsx`
+
+**Files changed.**
+- `src/contexts/AppContext.jsx` (45 → 89 lines)
+- `src/App.jsx` (provider stack reduced by one level; `useSelection` called
+  directly inside `AppLayout`)
+
+**Verification.** `npm run test:run`: 96 frontend tests pass (down from
+103; the 7 deleted tests were all trivial-hook coverage).
