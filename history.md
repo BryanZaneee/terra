@@ -46,8 +46,8 @@ The plan has 6 items, executed in order: A → B → C → D → E → F.
 |------|-------|--------|--------|
 | A | Polish OSS metadata | done | 3fa1d68 |
 | B | Tighten asset protocol scope | done | 3fa1d68 |
-| C | `with_db` helper, drop boilerplate | done | (next commit) |
-| D | Extract `media.rs` from `lib.rs` | pending | — |
+| C | `with_db` helper, drop boilerplate | done | ad35178 |
+| D | Extract `media.rs` from `lib.rs` | done | (next commit) |
 | E | Collapse trivial hooks and `SelectionContext` | pending | — |
 | F | Extract `groupPhotos` utility, collapse `ViewContext` effects | pending | — |
 
@@ -144,3 +144,48 @@ except the same 4 pre-existing dead-code warnings.
 - `lib.rs`: 1,619 → 1,607 (the `with_db` helper offset some of the
   command-side savings; the *commands themselves* are dramatically shorter).
 - `db.rs`: 1,661 → 1,501 (−160 lines).
+
+---
+
+### D — Extract `media.rs` from `lib.rs` (2026-04-26)
+
+Pulled all the pure media-processing code out of `lib.rs` into a new
+`media.rs` module. The plan deliberately picked a 2-way split (not 7-way) —
+commands stay in `lib.rs` with their existing section banners; `db.rs` was
+not touched.
+
+**Moved into `media.rs`:**
+
+- Date parsing: `parse_exif_datetime`, `parse_filename_date`,
+  `extract_exif_date`, `get_file_modified_time`
+- Hashing: `calculate_hash` (SHA-256 content hash), `compute_dhash`
+  (perceptual), `hamming_distance`
+- GPS: `extract_gps`, `get_location_name`
+- Media classification: `is_video`, `detect_screenshot`
+- Pipeline: `process_image`
+- The `lazy_static!` block (regexes + `GEOCODER_LOCATIONS`)
+
+**Stayed in `lib.rs`:**
+
+- `PhotoMetadata` struct (it's a domain type used across db, frontend, and
+  commands; not media-specific)
+- `pub mod config` (constants used by commands and db, plus referenced
+  from media.rs as `crate::config`)
+- All 43 Tauri commands and their helper structs (`DuplicateGroup`,
+  `ScanProgress`, `ArchivedPhoto`)
+- `is_path_in_managed_library` (security check that depends on
+  `db::get_library_path` and `db::get_archive_path`, so it's not pure
+  media)
+- `db_conn` / `with_db` helpers
+- `run()` and command registration
+
+**Small polish.** The `screenshot_dimensions` Vec inside `detect_screenshot`
+became a `const SCREENSHOT_DIMENSIONS: &[(u32, u32)]` since it's effectively
+a static lookup table — saves an allocation per call.
+
+**Files changed.** New `src-tauri/src/media.rs` (539 lines). Updated
+`src-tauri/src/lib.rs` (1,607 → 1,051 lines).
+
+**Verification.** `cargo test`: 48 tests pass (24 of them moved from
+`lib.rs::tests` into `media::tests`; the rest are `db::tests`). `cargo
+check` clean except the pre-existing 4 dead-code warnings.
