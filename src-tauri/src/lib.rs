@@ -45,6 +45,22 @@ lazy_static! {
     static ref SCREENSHOT_REGEX: Regex = Regex::new(r"(?i)(screenshot|screen[\s_-]?shot|capture|snip|grab)").unwrap();
 }
 
+/// Open a database connection with a consistent error format.
+/// Use directly when a command needs the connection across multiple steps.
+fn db_conn() -> Result<rusqlite::Connection, String> {
+    db::init_database().map_err(|e| format!("Database error: {}", e))
+}
+
+/// Open a connection, run one db operation, and format any error.
+/// Use for one-shot commands; multi-step commands should call `db_conn()`.
+fn with_db<T, F>(op: &str, f: F) -> Result<T, String>
+where
+    F: FnOnce(&rusqlite::Connection) -> rusqlite::Result<T>,
+{
+    let conn = db_conn()?;
+    f(&conn).map_err(|e| format!("{}: {}", op, e))
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct PhotoMetadata {
     pub path: String,
@@ -344,8 +360,7 @@ pub(crate) fn is_video(path: &Path) -> bool {
 /// COMMAND: Get all photos from the database
 #[tauri::command]
 fn get_all_photos() -> Result<Vec<PhotoMetadata>, String> {
-    let conn = db::init_database().map_err(|e| format!("Database error: {}", e))?;
-    db::get_all_photos(&conn).map_err(|e| format!("Failed to get photos: {}", e))
+    with_db("Failed to get photos", |c| db::get_all_photos(c))
 }
 
 #[tauri::command]
@@ -384,7 +399,7 @@ fn scan_directory(dir_path: String, save_to_db: bool) -> Result<Vec<PhotoMetadat
 
     // 3. Optionally save to database
     if save_to_db {
-        let conn = db::init_database().map_err(|e| format!("Database error: {}", e))?;
+        let conn = db_conn()?;
         for photo in &photos {
             db::insert_photo(&conn, photo, "scan")
                 .map_err(|e| format!("Failed to insert photo: {}", e))?;
@@ -402,7 +417,7 @@ fn upload_photos(file_paths: Vec<String>) -> Result<Vec<PhotoMetadata>, String> 
     info!("Uploading {} photos", file_paths.len());
 
     let library_path = db::get_library_path();
-    let conn = db::init_database().map_err(|e| format!("Database error: {}", e))?;
+    let conn = db_conn()?;
 
     // Use cached geocoder locations for better performance
     let geocoder = ReverseGeocoder::new(&GEOCODER_LOCATIONS);
@@ -517,31 +532,27 @@ fn upload_photos(file_paths: Vec<String>) -> Result<Vec<PhotoMetadata>, String> 
 
 #[tauri::command]
 fn toggle_favorite(path: String, is_favorite: bool) -> Result<(), String> {
-    let conn = db::init_database().map_err(|e| format!("Database error: {}", e))?;
-    db::set_photo_favorite(&conn, &path, is_favorite).map_err(|e| format!("Failed to set favorite: {}", e))
+    with_db("Failed to set favorite", |c| db::set_photo_favorite(c, &path, is_favorite))
 }
 
 #[tauri::command]
 fn create_album(name: String) -> Result<i64, String> {
-    let conn = db::init_database().map_err(|e| format!("Database error: {}", e))?;
-    db::create_album(&conn, &name).map_err(|e| format!("Failed to create album: {}", e))
+    with_db("Failed to create album", |c| db::create_album(c, &name))
 }
 
 #[tauri::command]
 fn delete_album(id: i64) -> Result<(), String> {
-    let conn = db::init_database().map_err(|e| format!("Database error: {}", e))?;
-    db::delete_album(&conn, id).map_err(|e| format!("Failed to delete album: {}", e))
+    with_db("Failed to delete album", |c| db::delete_album(c, id))
 }
 
 #[tauri::command]
 fn get_albums() -> Result<Vec<db::Album>, String> {
-    let conn = db::init_database().map_err(|e| format!("Database error: {}", e))?;
-    db::get_albums(&conn).map_err(|e| format!("Failed to get albums: {}", e))
+    with_db("Failed to get albums", |c| db::get_albums(c))
 }
 
 #[tauri::command]
 fn add_to_album(album_id: i64, photo_paths: Vec<String>) -> Result<(), String> {
-    let conn = db::init_database().map_err(|e| format!("Database error: {}", e))?;
+    let conn = db_conn()?;
     for path in photo_paths {
         db::add_photo_to_album(&conn, album_id, &path).map_err(|e| format!("Failed to add to album: {}", e))?;
     }
@@ -550,7 +561,7 @@ fn add_to_album(album_id: i64, photo_paths: Vec<String>) -> Result<(), String> {
 
 #[tauri::command]
 fn remove_from_album(album_id: i64, photo_paths: Vec<String>) -> Result<(), String> {
-    let conn = db::init_database().map_err(|e| format!("Database error: {}", e))?;
+    let conn = db_conn()?;
     for path in photo_paths {
         db::remove_photo_from_album(&conn, album_id, &path).map_err(|e| format!("Failed to remove from album: {}", e))?;
     }
@@ -559,14 +570,12 @@ fn remove_from_album(album_id: i64, photo_paths: Vec<String>) -> Result<(), Stri
 
 #[tauri::command]
 fn get_album_photos(album_id: i64) -> Result<Vec<PhotoMetadata>, String> {
-    let conn = db::init_database().map_err(|e| format!("Database error: {}", e))?;
-    db::get_album_photos(&conn, album_id).map_err(|e| format!("Failed to get album photos: {}", e))
+    with_db("Failed to get album photos", |c| db::get_album_photos(c, album_id))
 }
 
 #[tauri::command]
 fn set_album_cover(album_id: i64, photo_path: String) -> Result<(), String> {
-    let conn = db::init_database().map_err(|e| format!("Database error: {}", e))?;
-    db::set_album_cover(&conn, album_id, &photo_path).map_err(|e| format!("Failed to set album cover: {}", e))
+    with_db("Failed to set album cover", |c| db::set_album_cover(c, album_id, &photo_path))
 }
 
 /// Check if a path is within the Terra managed library or archive directories.
@@ -596,7 +605,7 @@ fn is_path_in_managed_library(path: &Path) -> bool {
 
 #[tauri::command]
 fn delete_photos(paths: Vec<String>) -> Result<(), String> {
-    let conn = db::init_database().map_err(|e| format!("Database error: {}", e))?;
+    let conn = db_conn()?;
     for path_str in paths {
         // 1. Delete from database
         db::delete_photo(&conn, &path_str).map_err(|e| format!("Failed to delete from DB: {}", e))?;
@@ -617,20 +626,17 @@ fn delete_photos(paths: Vec<String>) -> Result<(), String> {
 
 #[tauri::command]
 fn get_duplicates() -> Result<Vec<PhotoMetadata>, String> {
-    let conn = db::init_database().map_err(|e| format!("Database error: {}", e))?;
-    db::get_duplicates(&conn).map_err(|e| format!("Failed to get duplicates: {}", e))
+    with_db("Failed to get duplicates", |c| db::get_duplicates(c))
 }
 
 #[tauri::command]
 fn search_photos(query: String) -> Result<Vec<PhotoMetadata>, String> {
-    let conn = db::init_database().map_err(|e| format!("Database error: {}", e))?;
-    db::search_photos(&conn, &query).map_err(|e| format!("Failed to search photos: {}", e))
+    with_db("Failed to search photos", |c| db::search_photos(c, &query))
 }
 
 #[tauri::command]
 fn get_locations() -> Result<Vec<(String, i64)>, String> {
-    let conn = db::init_database().map_err(|e| format!("Database error: {}", e))?;
-    db::get_locations(&conn).map_err(|e| format!("Failed to get locations: {}", e))
+    with_db("Failed to get locations", |c| db::get_locations(c))
 }
 
 // ============================================================================
@@ -746,7 +752,7 @@ pub(crate) fn detect_screenshot(name: &str, width: u32, height: u32) -> bool {
 /// COMMAND: Scan library for duplicates and compute missing hashes
 #[tauri::command]
 async fn scan_for_duplicates(window: tauri::Window) -> Result<ScanProgress, String> {
-    let conn = db::init_database().map_err(|e| format!("Database error: {}", e))?;
+    let conn = db_conn()?;
 
     // Get photos that need hash computation
     let photos_without_hash = db::get_photos_without_dhash(&conn)
@@ -813,7 +819,7 @@ async fn scan_for_duplicates(window: tauri::Window) -> Result<ScanProgress, Stri
 /// COMMAND: Get duplicate groups based on hash similarity
 #[tauri::command]
 fn get_duplicate_groups(threshold: u32) -> Result<Vec<DuplicateGroup>, String> {
-    let conn = db::init_database().map_err(|e| format!("Database error: {}", e))?;
+    let conn = db_conn()?;
 
     // Get all photos with their hashes
     let photos_with_hash = db::get_all_photos_with_dhash(&conn)
@@ -932,7 +938,7 @@ fn get_duplicate_groups(threshold: u32) -> Result<Vec<DuplicateGroup>, String> {
 /// COMMAND: Scan for screenshots
 #[tauri::command]
 async fn scan_for_screenshots(window: tauri::Window) -> Result<Vec<PhotoMetadata>, String> {
-    let conn = db::init_database().map_err(|e| format!("Database error: {}", e))?;
+    let conn = db_conn()?;
 
     // Get all non-archived photos
     let all_photos = db::get_all_photos(&conn)
@@ -985,14 +991,13 @@ async fn scan_for_screenshots(window: tauri::Window) -> Result<Vec<PhotoMetadata
 /// COMMAND: Get all detected screenshots
 #[tauri::command]
 fn get_screenshots() -> Result<Vec<PhotoMetadata>, String> {
-    let conn = db::init_database().map_err(|e| format!("Database error: {}", e))?;
-    db::get_screenshots(&conn).map_err(|e| format!("Failed to get screenshots: {}", e))
+    with_db("Failed to get screenshots", |c| db::get_screenshots(c))
 }
 
 /// COMMAND: Archive photos (move to archive folder, set archived_at)
 #[tauri::command]
 fn archive_photos(paths: Vec<String>) -> Result<(), String> {
-    let conn = db::init_database().map_err(|e| format!("Database error: {}", e))?;
+    let conn = db_conn()?;
     let archive_path = db::get_archive_path();
 
     for path_str in paths {
@@ -1047,7 +1052,7 @@ fn archive_photos(paths: Vec<String>) -> Result<(), String> {
 /// COMMAND: Restore photos from archive
 #[tauri::command]
 fn restore_photos(paths: Vec<String>) -> Result<(), String> {
-    let conn = db::init_database().map_err(|e| format!("Database error: {}", e))?;
+    let conn = db_conn()?;
     let library_path = db::get_library_path();
     let archive_path = db::get_archive_path();
 
@@ -1101,7 +1106,7 @@ fn restore_photos(paths: Vec<String>) -> Result<(), String> {
 /// COMMAND: Get archived photos with days until deletion
 #[tauri::command]
 fn get_archived_photos() -> Result<Vec<ArchivedPhoto>, String> {
-    let conn = db::init_database().map_err(|e| format!("Database error: {}", e))?;
+    let conn = db_conn()?;
     let archived = db::get_archived_photos(&conn)
         .map_err(|e| format!("Failed to get archived photos: {}", e))?;
 
@@ -1127,7 +1132,7 @@ fn get_archived_photos() -> Result<Vec<ArchivedPhoto>, String> {
 /// COMMAND: Clean up old archived photos (older than configured days)
 #[tauri::command]
 fn cleanup_old_archives() -> Result<u32, String> {
-    let conn = db::init_database().map_err(|e| format!("Database error: {}", e))?;
+    let conn = db_conn()?;
 
     let old_paths = db::get_old_archived_photos(&conn, config::ARCHIVE_DELETION_DAYS)
         .map_err(|e| format!("Failed to get old archives: {}", e))?;
@@ -1165,29 +1170,25 @@ fn cleanup_old_archives() -> Result<u32, String> {
 /// COMMAND: Get all unreviewed photos for TerraForm
 #[tauri::command]
 fn get_unreviewed_photos() -> Result<Vec<PhotoMetadata>, String> {
-    let conn = db::init_database().map_err(|e| format!("Database error: {}", e))?;
-    db::get_unreviewed_photos(&conn).map_err(|e| format!("Failed to get unreviewed photos: {}", e))
+    with_db("Failed to get unreviewed photos", |c| db::get_unreviewed_photos(c))
 }
 
 /// COMMAND: Mark a photo as reviewed
 #[tauri::command]
 fn mark_photo_reviewed(path: String) -> Result<(), String> {
-    let conn = db::init_database().map_err(|e| format!("Database error: {}", e))?;
-    db::mark_photo_reviewed(&conn, &path).map_err(|e| format!("Failed to mark photo reviewed: {}", e))
+    with_db("Failed to mark photo reviewed", |c| db::mark_photo_reviewed(c, &path))
 }
 
 /// COMMAND: Get count of unreviewed photos
 #[tauri::command]
 fn get_unreviewed_count() -> Result<i64, String> {
-    let conn = db::init_database().map_err(|e| format!("Database error: {}", e))?;
-    db::get_unreviewed_count(&conn).map_err(|e| format!("Failed to get unreviewed count: {}", e))
+    with_db("Failed to get unreviewed count", |c| db::get_unreviewed_count(c))
 }
 
 /// COMMAND: Unmark a photo as reviewed (for undo)
 #[tauri::command]
 fn unmark_photo_reviewed(path: String) -> Result<(), String> {
-    let conn = db::init_database().map_err(|e| format!("Database error: {}", e))?;
-    db::unmark_photo_reviewed(&conn, &path).map_err(|e| format!("Failed to unmark photo reviewed: {}", e))
+    with_db("Failed to unmark photo reviewed", |c| db::unmark_photo_reviewed(c, &path))
 }
 
 // ============================================================================
@@ -1197,64 +1198,55 @@ fn unmark_photo_reviewed(path: String) -> Result<(), String> {
 /// COMMAND: Create a new tag
 #[tauri::command]
 fn create_tag(name: String, color: String) -> Result<i64, String> {
-    let conn = db::init_database().map_err(|e| format!("Database error: {}", e))?;
-    db::create_tag(&conn, &name, &color).map_err(|e| format!("Failed to create tag: {}", e))
+    with_db("Failed to create tag", |c| db::create_tag(c, &name, &color))
 }
 
 /// COMMAND: Update a tag
 #[tauri::command]
 fn update_tag(id: i64, name: String, color: String) -> Result<(), String> {
-    let conn = db::init_database().map_err(|e| format!("Database error: {}", e))?;
-    db::update_tag(&conn, id, &name, &color).map_err(|e| format!("Failed to update tag: {}", e))
+    with_db("Failed to update tag", |c| db::update_tag(c, id, &name, &color))
 }
 
 /// COMMAND: Delete a tag
 #[tauri::command]
 fn delete_tag(id: i64) -> Result<(), String> {
-    let conn = db::init_database().map_err(|e| format!("Database error: {}", e))?;
-    db::delete_tag(&conn, id).map_err(|e| format!("Failed to delete tag: {}", e))
+    with_db("Failed to delete tag", |c| db::delete_tag(c, id))
 }
 
 /// COMMAND: Get all tags
 #[tauri::command]
 fn get_all_tags() -> Result<Vec<db::Tag>, String> {
-    let conn = db::init_database().map_err(|e| format!("Database error: {}", e))?;
-    db::get_all_tags(&conn).map_err(|e| format!("Failed to get tags: {}", e))
+    with_db("Failed to get tags", |c| db::get_all_tags(c))
 }
 
 /// COMMAND: Get tags for a specific photo
 #[tauri::command]
 fn get_tags_for_photo(path: String) -> Result<Vec<db::Tag>, String> {
-    let conn = db::init_database().map_err(|e| format!("Database error: {}", e))?;
-    db::get_tags_for_photo(&conn, &path).map_err(|e| format!("Failed to get tags for photo: {}", e))
+    with_db("Failed to get tags for photo", |c| db::get_tags_for_photo(c, &path))
 }
 
 /// COMMAND: Add tags to photos
 #[tauri::command]
 fn add_tags_to_photos(tag_ids: Vec<i64>, photo_paths: Vec<String>) -> Result<(), String> {
-    let conn = db::init_database().map_err(|e| format!("Database error: {}", e))?;
-    db::add_tags_to_photos(&conn, &tag_ids, &photo_paths).map_err(|e| format!("Failed to add tags: {}", e))
+    with_db("Failed to add tags", |c| db::add_tags_to_photos(c, &tag_ids, &photo_paths))
 }
 
 /// COMMAND: Remove a tag from a photo
 #[tauri::command]
 fn remove_tag_from_photo(tag_id: i64, photo_path: String) -> Result<(), String> {
-    let conn = db::init_database().map_err(|e| format!("Database error: {}", e))?;
-    db::remove_tag_from_photo(&conn, tag_id, &photo_path).map_err(|e| format!("Failed to remove tag: {}", e))
+    with_db("Failed to remove tag", |c| db::remove_tag_from_photo(c, tag_id, &photo_path))
 }
 
 /// COMMAND: Get photos by tags
 #[tauri::command]
 fn get_photos_by_tags(tag_ids: Vec<i64>, match_all: bool) -> Result<Vec<PhotoMetadata>, String> {
-    let conn = db::init_database().map_err(|e| format!("Database error: {}", e))?;
-    db::get_photos_by_tags(&conn, &tag_ids, match_all).map_err(|e| format!("Failed to get photos by tags: {}", e))
+    with_db("Failed to get photos by tags", |c| db::get_photos_by_tags(c, &tag_ids, match_all))
 }
 
 /// COMMAND: Search tags for autocomplete
 #[tauri::command]
 fn search_tags(query: String) -> Result<Vec<db::Tag>, String> {
-    let conn = db::init_database().map_err(|e| format!("Database error: {}", e))?;
-    db::search_tags(&conn, &query).map_err(|e| format!("Failed to search tags: {}", e))
+    with_db("Failed to search tags", |c| db::search_tags(c, &query))
 }
 
 // ============================================================================
@@ -1270,14 +1262,13 @@ fn get_library_path_command() -> Result<String, String> {
 /// COMMAND: Set the library path
 #[tauri::command]
 fn set_library_path(path: String) -> Result<(), String> {
-    let conn = db::init_database().map_err(|e| format!("Database error: {}", e))?;
-    db::set_setting(&conn, "library_path", &path).map_err(|e| format!("Failed to set library path: {}", e))
+    with_db("Failed to set library path", |c| db::set_setting(c, "library_path", &path))
 }
 
 /// COMMAND: Get a setting value
 #[tauri::command]
 fn get_setting_command(key: String) -> Result<Option<String>, String> {
-    let conn = db::init_database().map_err(|e| format!("Database error: {}", e))?;
+    let conn = db_conn()?;
     Ok(db::get_setting(&conn, &key))
 }
 
@@ -1288,15 +1279,13 @@ fn get_setting_command(key: String) -> Result<Option<String>, String> {
 /// COMMAND: Get all smart collections with counts
 #[tauri::command]
 fn get_smart_collections() -> Result<Vec<db::SmartCollection>, String> {
-    let conn = db::init_database().map_err(|e| format!("Database error: {}", e))?;
-    db::get_smart_collections(&conn).map_err(|e| format!("Failed to get smart collections: {}", e))
+    with_db("Failed to get smart collections", |c| db::get_smart_collections(c))
 }
 
 /// COMMAND: Get photos for a smart collection
 #[tauri::command]
 fn get_smart_collection_photos(collection_id: String) -> Result<Vec<PhotoMetadata>, String> {
-    let conn = db::init_database().map_err(|e| format!("Database error: {}", e))?;
-    db::get_smart_collection_photos(&conn, &collection_id).map_err(|e| format!("Failed to get collection photos: {}", e))
+    with_db("Failed to get collection photos", |c| db::get_smart_collection_photos(c, &collection_id))
 }
 
 // ============================================================================
@@ -1306,14 +1295,13 @@ fn get_smart_collection_photos(collection_id: String) -> Result<Vec<PhotoMetadat
 /// COMMAND: Get storage analytics
 #[tauri::command]
 fn get_storage_analytics() -> Result<db::StorageAnalytics, String> {
-    let conn = db::init_database().map_err(|e| format!("Database error: {}", e))?;
-    db::get_storage_analytics(&conn).map_err(|e| format!("Failed to get storage analytics: {}", e))
+    with_db("Failed to get storage analytics", |c| db::get_storage_analytics(c))
 }
 
 /// COMMAND: Populate file sizes for all photos (one-time migration)
 #[tauri::command]
 async fn populate_file_sizes(window: tauri::Window) -> Result<ScanProgress, String> {
-    let conn = db::init_database().map_err(|e| format!("Database error: {}", e))?;
+    let conn = db_conn()?;
 
     let paths = db::get_photos_without_file_size(&conn)
         .map_err(|e| format!("Failed to get photos: {}", e))?;

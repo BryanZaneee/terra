@@ -44,9 +44,9 @@ The plan has 6 items, executed in order: A → B → C → D → E → F.
 
 | Item | Title | Status | Commit |
 |------|-------|--------|--------|
-| A | Polish OSS metadata | done | (next commit) |
-| B | Tighten asset protocol scope | done | (next commit) |
-| C | `with_db` helper, drop boilerplate | pending | — |
+| A | Polish OSS metadata | done | 3fa1d68 |
+| B | Tighten asset protocol scope | done | 3fa1d68 |
+| C | `with_db` helper, drop boilerplate | done | (next commit) |
 | D | Extract `media.rs` from `lib.rs` | pending | — |
 | E | Collapse trivial hooks and `SelectionContext` | pending | — |
 | F | Extract `groupPhotos` utility, collapse `ViewContext` effects | pending | — |
@@ -91,3 +91,56 @@ was in the working tree at session start. It's the same OSS-readiness theme,
 so they're bundled. `docs/IMPLEMENTATION_PLAN.md` and `docs/ROADMAP.md` had
 pre-existing changes too but were left for a separate commit since they're
 docs scope, not the code/metadata polish tracked here.
+
+---
+
+### C — `with_db` helper, drop backend boilerplate (2026-04-26)
+
+The biggest readability win in this effort. Two patterns repeated throughout
+the Rust backend:
+
+1. Every Tauri command opened `let conn = db::init_database().map_err(|e|
+   format!("Database error: {}", e))?;` (43 copies).
+2. Every "list" query helper did `let mut stmt = ...; let rows =
+   stmt.query_map(...)?; let mut result = Vec::new(); for r in rows {
+   result.push(r?); } Ok(result)` (~17 copies).
+
+**Change.** Added two helpers near the top of `lib.rs`:
+
+```rust
+fn db_conn() -> Result<rusqlite::Connection, String> { ... }
+fn with_db<T, F>(op: &str, f: F) -> Result<T, String>
+where F: FnOnce(&rusqlite::Connection) -> rusqlite::Result<T> { ... }
+```
+
+Simple commands now look like:
+```rust
+fn toggle_favorite(path: String, is_favorite: bool) -> Result<(), String> {
+    with_db("Failed to set favorite", |c| db::set_photo_favorite(c, &path, is_favorite))
+}
+```
+
+Multi-step commands use `db_conn()?` and keep their existing logic.
+
+In `db.rs`, the for-loop pattern was replaced with `let rows =
+stmt.query_map(...)?; rows.collect()`. The existing `query_photos` helper at
+the bottom of the file was simplified to use the same idiom.
+
+**Drop-order gotcha discovered.** `stmt.query_map(...)?.collect()` as a tail
+expression triggers E0597 ("`stmt` does not live long enough") because the
+intermediate temporary `Result<MappedRows>` extends a borrow of `stmt` that
+outlives the local. Workaround: bind to `let rows = ...;` first, then call
+`rows.collect()`. The `query_photos` helper avoids this because its `stmt`
+is a parameter (not a local), so drop order isn't a concern. Future
+contributors should know: when refactoring db code, prefer
+`let rows = stmt.query_map(...)?; rows.collect()` over the chained form.
+
+**Files changed.** `src-tauri/src/lib.rs`, `src-tauri/src/db.rs`.
+
+**Verification.** `cargo test` — all 48 tests pass. `cargo check` clean
+except the same 4 pre-existing dead-code warnings.
+
+**Line counts.**
+- `lib.rs`: 1,619 → 1,607 (the `with_db` helper offset some of the
+  command-side savings; the *commands themselves* are dramatically shorter).
+- `db.rs`: 1,661 → 1,501 (−160 lines).

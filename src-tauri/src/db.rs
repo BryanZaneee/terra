@@ -253,18 +253,11 @@ fn photo_from_row(row: &rusqlite::Row) -> rusqlite::Result<PhotoMetadata> {
 /// Get all photos from the database, sorted by date_taken descending
 pub fn get_all_photos(conn: &Connection) -> SqlResult<Vec<PhotoMetadata>> {
     let mut stmt = conn.prepare(
-        "SELECT path, name, date_taken, width, height, is_favorite, content_hash, latitude, longitude, location_name 
+        "SELECT path, name, date_taken, width, height, is_favorite, content_hash, latitude, longitude, location_name
          FROM photos ORDER BY date_taken DESC"
     )?;
-
-    let photos = stmt.query_map([], |row| photo_from_row(row))?;
-
-    let mut result = Vec::new();
-    for photo in photos {
-        result.push(photo?);
-    }
-
-    Ok(result)
+    let rows = stmt.query_map([], photo_from_row)?;
+    rows.collect()
 }
 
 /// Check if a photo already exists in the database
@@ -288,17 +281,8 @@ pub fn get_photo_count_by_year(conn: &Connection) -> SqlResult<Vec<(String, i64)
          GROUP BY year
          ORDER BY year DESC"
     )?;
-
-    let counts = stmt.query_map([], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-    })?;
-
-    let mut result = Vec::new();
-    for count in counts {
-        result.push(count?);
-    }
-
-    Ok(result)
+    let rows = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))?;
+    rows.collect()
 }
 
 /// Set photo favorite status
@@ -360,21 +344,13 @@ pub fn get_albums(conn: &Connection) -> SqlResult<Vec<Album>> {
          GROUP BY a.id
          ORDER BY a.created_at DESC"
     )?;
-
-    let albums = stmt.query_map([], |row| {
-        Ok(Album {
-            id: row.get(0)?,
-            name: row.get(1)?,
-            cover_photo_path: row.get(2)?,
-            count: row.get(3)?,
-        })
-    })?;
-
-    let mut result = Vec::new();
-    for album in albums {
-        result.push(album?);
-    }
-    Ok(result)
+    let rows = stmt.query_map([], |row| Ok(Album {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        cover_photo_path: row.get(2)?,
+        count: row.get(3)?,
+    }))?;
+    rows.collect()
 }
 
 /// Get all photos in an album
@@ -386,14 +362,8 @@ pub fn get_album_photos(conn: &Connection, album_id: i64) -> SqlResult<Vec<Photo
          WHERE ap.album_id = ?1
          ORDER BY p.date_taken DESC"
     )?;
-
-    let photos = stmt.query_map(params![album_id], |row| photo_from_row(row))?;
-
-    let mut result = Vec::new();
-    for photo in photos {
-        result.push(photo?);
-    }
-    Ok(result)
+    let rows = stmt.query_map(params![album_id], photo_from_row)?;
+    rows.collect()
 }
 
 /// Set album cover photo
@@ -415,14 +385,8 @@ pub fn get_duplicates(conn: &Connection) -> SqlResult<Vec<PhotoMetadata>> {
          )
          ORDER BY content_hash, date_taken DESC"
     )?;
-
-    let photos = stmt.query_map([], |row| photo_from_row(row))?;
-
-    let mut result = Vec::new();
-    for photo in photos {
-        result.push(photo?);
-    }
-    Ok(result)
+    let rows = stmt.query_map([], photo_from_row)?;
+    rows.collect()
 }
 
 /// Search photos by text (name or location)
@@ -434,14 +398,8 @@ pub fn search_photos(conn: &Connection, query: &str) -> SqlResult<Vec<PhotoMetad
          WHERE name LIKE ?1 OR location_name LIKE ?1
          ORDER BY date_taken DESC"
     )?;
-
-    let photos = stmt.query_map(params![search_term], |row| photo_from_row(row))?;
-
-    let mut result = Vec::new();
-    for photo in photos {
-        result.push(photo?);
-    }
-    Ok(result)
+    let rows = stmt.query_map(params![search_term], photo_from_row)?;
+    rows.collect()
 }
 
 /// Get all unique locations with photo counts
@@ -453,16 +411,8 @@ pub fn get_locations(conn: &Connection) -> SqlResult<Vec<(String, i64)>> {
          GROUP BY location_name
          ORDER BY count DESC"
     )?;
-
-    let locations = stmt.query_map([], |row| {
-        Ok((row.get(0)?, row.get(1)?))
-    })?;
-
-    let mut result = Vec::new();
-    for loc in locations {
-        result.push(loc?);
-    }
-    Ok(result)
+    let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+    rows.collect()
 }
 
 /// Check if a photo with the given hash exists
@@ -489,16 +439,8 @@ pub fn get_photos_without_dhash(conn: &Connection) -> SqlResult<Vec<(String, Str
     let mut stmt = conn.prepare(
         "SELECT path, name FROM photos WHERE dhash_64 IS NULL AND archived_at IS NULL"
     )?;
-
-    let photos = stmt.query_map([], |row| {
-        Ok((row.get(0)?, row.get(1)?))
-    })?;
-
-    let mut result = Vec::new();
-    for photo in photos {
-        result.push(photo?);
-    }
-    Ok(result)
+    let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+    rows.collect()
 }
 
 /// Update the dhash for a photo
@@ -524,16 +466,8 @@ pub fn get_all_photos_with_dhash(conn: &Connection) -> SqlResult<Vec<(String, Op
     let mut stmt = conn.prepare(
         "SELECT path, dhash_64, content_hash FROM photos WHERE archived_at IS NULL ORDER BY date_taken DESC"
     )?;
-
-    let photos = stmt.query_map([], |row| {
-        Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-    })?;
-
-    let mut result = Vec::new();
-    for photo in photos {
-        result.push(photo?);
-    }
-    Ok(result)
+    let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+    rows.collect()
 }
 
 /// Get all photos marked as screenshots
@@ -542,14 +476,8 @@ pub fn get_screenshots(conn: &Connection) -> SqlResult<Vec<PhotoMetadata>> {
         "SELECT path, name, date_taken, width, height, is_favorite, content_hash, latitude, longitude, location_name
          FROM photos WHERE is_screenshot = 1 AND archived_at IS NULL ORDER BY date_taken DESC"
     )?;
-
-    let photos = stmt.query_map([], |row| photo_from_row(row))?;
-
-    let mut result = Vec::new();
-    for photo in photos {
-        result.push(photo?);
-    }
-    Ok(result)
+    let rows = stmt.query_map([], photo_from_row)?;
+    rows.collect()
 }
 
 /// Archive a photo (set archived_at timestamp)
@@ -577,18 +505,8 @@ pub fn get_archived_photos(conn: &Connection) -> SqlResult<Vec<(PhotoMetadata, i
         "SELECT path, name, date_taken, width, height, is_favorite, content_hash, latitude, longitude, location_name, archived_at
          FROM photos WHERE archived_at IS NOT NULL ORDER BY archived_at DESC"
     )?;
-
-    let photos = stmt.query_map([], |row| {
-        let photo = photo_from_row(row)?;
-        let archived_at: i64 = row.get(10)?;
-        Ok((photo, archived_at))
-    })?;
-
-    let mut result = Vec::new();
-    for photo in photos {
-        result.push(photo?);
-    }
-    Ok(result)
+    let rows = stmt.query_map([], |row| Ok((photo_from_row(row)?, row.get::<_, i64>(10)?)))?;
+    rows.collect()
 }
 
 /// Get photos archived more than N days ago (for cleanup)
@@ -597,16 +515,8 @@ pub fn get_old_archived_photos(conn: &Connection, days: i64) -> SqlResult<Vec<St
     let mut stmt = conn.prepare(
         "SELECT path FROM photos WHERE archived_at IS NOT NULL AND archived_at < ?1"
     )?;
-
-    let paths = stmt.query_map(params![cutoff], |row| {
-        Ok(row.get(0)?)
-    })?;
-
-    let mut result = Vec::new();
-    for path in paths {
-        result.push(path?);
-    }
-    Ok(result)
+    let rows = stmt.query_map(params![cutoff], |row| row.get(0))?;
+    rows.collect()
 }
 
 /// Permanently delete a photo from database
@@ -639,14 +549,8 @@ pub fn get_unreviewed_photos(conn: &Connection) -> SqlResult<Vec<PhotoMetadata>>
         "SELECT path, name, date_taken, width, height, is_favorite, content_hash, latitude, longitude, location_name
          FROM photos WHERE reviewed_at IS NULL AND archived_at IS NULL ORDER BY date_taken DESC"
     )?;
-
-    let photos = stmt.query_map([], |row| photo_from_row(row))?;
-
-    let mut result = Vec::new();
-    for photo in photos {
-        result.push(photo?);
-    }
-    Ok(result)
+    let rows = stmt.query_map([], photo_from_row)?;
+    rows.collect()
 }
 
 /// Mark a photo as reviewed
@@ -721,21 +625,13 @@ pub fn get_all_tags(conn: &Connection) -> SqlResult<Vec<Tag>> {
          GROUP BY t.id
          ORDER BY count DESC, t.name ASC"
     )?;
-
-    let tags = stmt.query_map([], |row| {
-        Ok(Tag {
-            id: row.get(0)?,
-            name: row.get(1)?,
-            color: row.get(2)?,
-            count: row.get(3)?,
-        })
-    })?;
-
-    let mut result = Vec::new();
-    for tag in tags {
-        result.push(tag?);
-    }
-    Ok(result)
+    let rows = stmt.query_map([], |row| Ok(Tag {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        color: row.get(2)?,
+        count: row.get(3)?,
+    }))?;
+    rows.collect()
 }
 
 /// Get tags for a specific photo
@@ -747,21 +643,13 @@ pub fn get_tags_for_photo(conn: &Connection, path: &str) -> SqlResult<Vec<Tag>> 
          WHERE pt.photo_path = ?1
          ORDER BY t.name ASC"
     )?;
-
-    let tags = stmt.query_map(params![path], |row| {
-        Ok(Tag {
-            id: row.get(0)?,
-            name: row.get(1)?,
-            color: row.get(2)?,
-            count: row.get(3)?,
-        })
-    })?;
-
-    let mut result = Vec::new();
-    for tag in tags {
-        result.push(tag?);
-    }
-    Ok(result)
+    let rows = stmt.query_map(params![path], |row| Ok(Tag {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        color: row.get(2)?,
+        count: row.get(3)?,
+    }))?;
+    rows.collect()
 }
 
 /// Add tags to photos (bulk operation)
@@ -831,13 +719,8 @@ pub fn get_photos_by_tags(conn: &Connection, tag_ids: &[i64], match_all: bool) -
         params_vec.push(Box::new(tag_ids.len() as i64));
     }
 
-    let photos = stmt.query_map(rusqlite::params_from_iter(params_vec.iter().map(|p| p.as_ref())), |row| photo_from_row(row))?;
-
-    let mut result = Vec::new();
-    for photo in photos {
-        result.push(photo?);
-    }
-    Ok(result)
+    let rows = stmt.query_map(rusqlite::params_from_iter(params_vec.iter().map(|p| p.as_ref())), photo_from_row)?;
+    rows.collect()
 }
 
 /// Search tags by name (for autocomplete)
@@ -852,21 +735,13 @@ pub fn search_tags(conn: &Connection, query: &str) -> SqlResult<Vec<Tag>> {
          ORDER BY count DESC, t.name ASC
          LIMIT 10"
     )?;
-
-    let tags = stmt.query_map(params![search_term], |row| {
-        Ok(Tag {
-            id: row.get(0)?,
-            name: row.get(1)?,
-            color: row.get(2)?,
-            count: row.get(3)?,
-        })
-    })?;
-
-    let mut result = Vec::new();
-    for tag in tags {
-        result.push(tag?);
-    }
-    Ok(result)
+    let rows = stmt.query_map(params![search_term], |row| Ok(Tag {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        color: row.get(2)?,
+        count: row.get(3)?,
+    }))?;
+    rows.collect()
 }
 
 // ============================================================================
@@ -1086,13 +961,7 @@ pub fn get_smart_collection_photos(conn: &Connection, collection_id: &str) -> Sq
 }
 
 fn query_photos<P: rusqlite::Params>(stmt: &mut rusqlite::Statement, params: P) -> SqlResult<Vec<PhotoMetadata>> {
-    let photos = stmt.query_map(params, |row| photo_from_row(row))?;
-
-    let mut result = Vec::new();
-    for photo in photos {
-        result.push(photo?);
-    }
-    Ok(result)
+    stmt.query_map(params, photo_from_row)?.collect()
 }
 
 // ============================================================================
@@ -1206,8 +1075,7 @@ pub fn get_storage_analytics(conn: &Connection) -> SqlResult<StorageAnalytics> {
     ).unwrap_or(0);
 
     // Size by month (last 12 months)
-    let mut size_by_month = Vec::new();
-    let mut stmt = conn.prepare(
+    let size_by_month: Vec<MonthSize> = conn.prepare(
         "SELECT strftime('%Y-%m', date_taken, 'unixepoch') as month,
                 COALESCE(SUM(file_size), 0) as size,
                 COUNT(*) as count
@@ -1215,21 +1083,14 @@ pub fn get_storage_analytics(conn: &Connection) -> SqlResult<StorageAnalytics> {
          WHERE archived_at IS NULL AND date_taken > strftime('%s', 'now', '-12 months')
          GROUP BY month
          ORDER BY month DESC"
-    )?;
-    let months = stmt.query_map([], |row| {
-        Ok(MonthSize {
-            month: row.get(0)?,
-            size: row.get(1)?,
-            count: row.get(2)?,
-        })
-    })?;
-    for month in months {
-        size_by_month.push(month?);
-    }
+    )?.query_map([], |row| Ok(MonthSize {
+        month: row.get(0)?,
+        size: row.get(1)?,
+        count: row.get(2)?,
+    }))?.collect::<SqlResult<_>>()?;
 
     // Size by year
-    let mut size_by_year = Vec::new();
-    let mut stmt = conn.prepare(
+    let size_by_year: Vec<YearSize> = conn.prepare(
         "SELECT strftime('%Y', date_taken, 'unixepoch') as year,
                 COALESCE(SUM(file_size), 0) as size,
                 COUNT(*) as count
@@ -1237,38 +1098,25 @@ pub fn get_storage_analytics(conn: &Connection) -> SqlResult<StorageAnalytics> {
          WHERE archived_at IS NULL
          GROUP BY year
          ORDER BY year DESC"
-    )?;
-    let years = stmt.query_map([], |row| {
-        Ok(YearSize {
-            year: row.get(0)?,
-            size: row.get(1)?,
-            count: row.get(2)?,
-        })
-    })?;
-    for year in years {
-        size_by_year.push(year?);
-    }
+    )?.query_map([], |row| Ok(YearSize {
+        year: row.get(0)?,
+        size: row.get(1)?,
+        count: row.get(2)?,
+    }))?.collect::<SqlResult<_>>()?;
 
     // Top 10 largest files
-    let mut top_largest_files = Vec::new();
-    let mut stmt = conn.prepare(
+    let top_largest_files: Vec<LargeFile> = conn.prepare(
         "SELECT path, name, file_size, date_taken
          FROM photos
          WHERE archived_at IS NULL AND file_size IS NOT NULL
          ORDER BY file_size DESC
          LIMIT 10"
-    )?;
-    let files = stmt.query_map([], |row| {
-        Ok(LargeFile {
-            path: row.get(0)?,
-            name: row.get(1)?,
-            size: row.get(2)?,
-            date_taken: row.get(3)?,
-        })
-    })?;
-    for file in files {
-        top_largest_files.push(file?);
-    }
+    )?.query_map([], |row| Ok(LargeFile {
+        path: row.get(0)?,
+        name: row.get(1)?,
+        size: row.get(2)?,
+        date_taken: row.get(3)?,
+    }))?.collect::<SqlResult<_>>()?;
 
     Ok(StorageAnalytics {
         total_size_bytes,
@@ -1299,16 +1147,8 @@ pub fn get_photos_without_file_size(conn: &Connection) -> SqlResult<Vec<String>>
     let mut stmt = conn.prepare(
         "SELECT path FROM photos WHERE file_size IS NULL AND archived_at IS NULL"
     )?;
-
-    let paths = stmt.query_map([], |row| {
-        Ok(row.get(0)?)
-    })?;
-
-    let mut result = Vec::new();
-    for path in paths {
-        result.push(path?);
-    }
-    Ok(result)
+    let rows = stmt.query_map([], |row| row.get(0))?;
+    rows.collect()
 }
 
 #[cfg(test)]
