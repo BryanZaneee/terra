@@ -48,8 +48,8 @@ The plan has 6 items, executed in order: A → B → C → D → E → F.
 | B | Tighten asset protocol scope | done | 3fa1d68 |
 | C | `with_db` helper, drop boilerplate | done | ad35178 |
 | D | Extract `media.rs` from `lib.rs` | done | e5f8b10 |
-| E | Collapse trivial hooks and `SelectionContext` | done | (next commit) |
-| F | Extract `groupPhotos` utility, collapse `ViewContext` effects | pending | — |
+| E | Collapse trivial hooks and `SelectionContext` | done | a7359d3 |
+| F | Extract `groupPhotos` utility, collapse `ViewContext` effects | done | (next commit) |
 
 Detailed entries are appended below as each item lands.
 
@@ -231,3 +231,67 @@ value, all flagged in the audit:
 
 **Verification.** `npm run test:run`: 96 frontend tests pass (down from
 103; the 7 deleted tests were all trivial-hook coverage).
+
+---
+
+### F — Extract groupPhotos utility, collapse ViewContext effects (2026-04-26)
+
+`ViewContext.jsx` had two readability hotspots flagged by the audit:
+
+1. A 50-line `useMemo` with six conditional branches that grouped photos
+   differently for each view mode (duplicates / locations / tags /
+   collection:* / regular). Hard to scan and impossible to unit-test.
+2. Four near-identical async load effects (album, smart collection, tag,
+   "regular view fallback") plus a fifth effect that re-fired the tag load
+   when `selectedTagIds` changed.
+
+**Change.**
+
+- Extracted `groupPhotosBy(viewMode, photos, smartCollections)` into a new
+  pure function at `src/utils/groupPhotos.js` (72 lines). Added
+  `src/utils/groupPhotos.test.js` covering all 6 branches and the filter
+  semantics (12 tests).
+- Inside `ViewContext.jsx`, the `useMemo` becomes a one-line call to
+  `groupPhotosBy`. The four scattered load-effects collapse into one
+  effect with `if/else if` switching on `viewMode`. The redundant
+  selectedTagIds-only effect is gone — the unified effect's dependency
+  array (`[viewMode, selectedTagIds]`) covers it.
+
+**Year-test gotcha.** The first version of the year-grouping test used
+`Date(timestamp).getFullYear()` with a Jan-1 UTC timestamp, which can
+shift across a year boundary depending on the test runner's timezone.
+Switched to mid-year timestamps so the test is timezone-independent.
+
+**Files.**
+- New: `src/utils/groupPhotos.js`, `src/utils/groupPhotos.test.js`.
+- Changed: `src/contexts/ViewContext.jsx` (260 → 181 lines).
+
+**Verification.** `npm run test:run`: 108 frontend tests pass (96 + 12 new
+`groupPhotos` tests). `npm run build` succeeds (the 618 kB chunk-size
+warning is pre-existing).
+
+---
+
+## Final state of the simplification effort
+
+Total impact across A–F (vs the pre-refactor state):
+
+| File | Before | After | Δ |
+|------|--------|-------|---|
+| `src-tauri/src/lib.rs` | 1,619 | 1,051 | −568 |
+| `src-tauri/src/db.rs` | 1,661 | 1,501 | −160 |
+| `src-tauri/src/media.rs` | (n/a) | 539 | +539 |
+| `src/contexts/AppContext.jsx` | 45 | 89 | +44 |
+| `src/contexts/ViewContext.jsx` | 260 | 181 | −79 |
+| `src/utils/groupPhotos.js` | (n/a) | 72 | +72 |
+| Frontend deletions (5 files) | 109 | 0 | −109 |
+
+`cargo test`: 48 → 48. `npm run test:run`: 103 → 108 (lost 7 trivial-hook
+tests, gained 12 `groupPhotos` tests).
+
+Open items for the owner before publishing:
+- Confirm `github.com/BryanZaneee/terra` matches the actual repo URL.
+- Confirm author email `bzane09@gmail.com` is appropriate to publish.
+- Decide whether `docs/IMPLEMENTATION_PLAN.md` and `docs/ROADMAP.md` (which
+  had pre-existing changes touched in the working tree) should ship in
+  separate commits or be amended into this series.
