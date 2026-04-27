@@ -18,8 +18,7 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "publisher": "Terra",
-    "homepage": "https://terra.local",
+    "publisher": "Bryan Zane",
     "longDescription": "High-performance local photo gallery for macOS capable of browsing massive libraries with a unique aesthetic.",
     "macOS": {
       "minimumSystemVersion": "10.15"
@@ -44,8 +43,7 @@
         "enable": true,
         "scope": [
           "$PICTURE/**",
-          "$DATA/**",
-          "$HOME/**"
+          "$DATA/**"
         ]
       }
     }

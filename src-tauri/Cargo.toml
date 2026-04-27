@@ -2,7 +2,9 @@
 name = "terra"
 version = "0.1.0"
 description = "High-performance local photo gallery for macOS"
-authors = ["Terra Team"]
+authors = ["Bryan Zane <bzane09@gmail.com>"]
+license = "MIT"
+repository = "https://github.com/BryanZaneee/terra"
 edition = "2021"
 
 [lib]

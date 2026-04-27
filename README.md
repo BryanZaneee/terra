@@ -1,200 +1,200 @@
 # Terra - Local Photo Gallery
 
-<div align="center">
+Terra is a local-first photo and video library for macOS. It is built for people who want an iOS/Google Photos-like browsing and cleanup experience without handing their whole library to another cloud subscription.
 
-**High-performance local photo gallery for macOS with a unique "Glassy + Dither + ASCII" aesthetic**
+The app is currently a Tauri v2 desktop app with a React/Vite frontend, a Rust backend, and SQLite metadata storage. Photos are copied into a managed local Terra library, indexed with metadata, and presented through gallery, organization, review, and storage-cleanup workflows.
 
-![Version](https://img.shields.io/badge/version-0.1.0-blue.svg)
-![License](https://img.shields.io/badge/license-MIT-green.svg)
-![Platform](https://img.shields.io/badge/platform-macOS-lightgrey.svg)
+## Current Status
 
-</div>
+Terra has moved beyond the original scan-only MVP. The core local library is implemented:
 
-## Overview
+- Managed local imports into a configurable Terra library folder.
+- SQLite metadata cache for photos, albums, tags, settings, favorites, archive state, review state, hashes, locations, and file sizes.
+- Gallery views for all media, years, months, locations, favorites, photos-only, videos-only, albums, tags, search results, and smart collections.
+- Albums and bulk add-to-album workflows.
+- Tags, bulk tagging, and per-photo tag management.
+- Full-screen photo viewer and video playback.
+- Duplicate detection using exact content hashes and perceptual hashes.
+- Screenshot detection and review.
+- Archive/restore flow with automatic cleanup after 14 days.
+- TerraForm Review for quickly keeping or archiving unreviewed photos.
+- Storage analytics for media type totals, largest files, storage by year/month, screenshots, and estimated duplicate savings.
 
-Terra is a blazingly fast local photo gallery application built for macOS, capable of browsing massive libraries (10k+ images) with stunning performance. It features a unique visual aesthetic combining glassy UI elements, dithered backgrounds, and ASCII flow effects.
+Still planned:
 
-### Key Features
+- Generated thumbnail cache.
+- Virtualized gallery rendering for very large libraries.
+- Import pipelines for Google Photos Takeout, Apple Photos/iCloud, Snapchat, and other social/cloud archives.
+- More advanced cloud migration tools and source-specific metadata reconciliation.
 
-- **🚀 High Performance**: Handles 10,000+ images with parallel processing (Rust + Rayon)
-- **📁 Local-First**: No cloud dependencies for viewing your photos
-- **🎨 Unique Aesthetic**: Glassy UI with animated ASCII dithered background
-- **📊 Smart Organization**: Sort by years, months, or view all photos
-- **🔍 EXIF Support**: Automatically extracts photo metadata and dates
-- **☁️ Cloud Migration Ready**: UI placeholders for future iCloud/Google Photos integration
+## Tech Stack
+
+- Frontend: React 18 + Vite
+- Desktop shell: Tauri v2
+- Backend: Rust
+- Database: SQLite via `rusqlite`
+- Styling: Tailwind CSS
+- Charts: Recharts
+- Icons: Lucide React
+- Metadata and media helpers: `rexif`, `image`, `sha2`, `image_hasher`, `reverse_geocoder`
+- Performance: Rayon for parallel Rust processing
 
 ## Architecture
 
-### Tech Stack
+Terra is split across a React UI and a Rust command backend:
 
-- **Frontend**: React 18 + Vite
-- **Backend**: Rust (Tauri v2)
-- **Styling**: Tailwind CSS
-- **Icons**: Lucide React
-- **Performance**: Rayon (parallel processing), WalkDir (recursive scanning)
-- **Metadata**: kamadak-exif (EXIF extraction)
+- `src/App.jsx` wires together the application layout and modals.
+- `src/contexts/` coordinates app, view, and selection state.
+- `src/hooks/` contains feature state for photos, albums, tags, cleanup, and selection.
+- `src/components/` contains the gallery, sidebar, modals, review tools, analytics, and media viewer.
+- `src-tauri/src/lib.rs` exposes Tauri commands and media-processing logic.
+- `src-tauri/src/db.rs` owns SQLite schema creation, migrations, and queries.
 
-### Three-Tier Performance Pipeline
+The local data flow is:
 
-1. **Tier A (Rust)**: Parallel filesystem scanning with `rayon` and `walkdir`
-2. **Tier B (Future)**: SQLite caching for instant startup
-3. **Tier C (React)**: Virtualized rendering for smooth scrolling
+1. The user selects media through **Upload Photos**.
+2. Rust copies files into the managed Terra library, defaulting to `~/Pictures/Terra`.
+3. Files are organized by year/month based on extracted date metadata.
+4. Terra extracts EXIF, filename, filesystem, hash, location, screenshot, and size metadata where available.
+5. SQLite stores the indexed metadata.
+6. React reads through Tauri commands and renders gallery/review/analytics views.
 
 ## Prerequisites
 
-Before you begin, ensure you have the following installed:
+- macOS 10.15 or newer
+- Node.js 18 or newer
+- Rust stable toolchain
 
-- **Node.js** (v18 or higher)
-- **Rust** (latest stable version)
-- **macOS** 10.15 or higher
-
-### Installing Rust
-
-```bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-```
-
-### Installing Node.js
-
-```bash
-# Using Homebrew
-brew install node
-```
-
-## Installation
-
-1. **Clone the repository**
-
-```bash
-git clone https://github.com/yourusername/terra.git
-cd terra
-```
-
-2. **Install dependencies**
+Install dependencies:
 
 ```bash
 npm install
 ```
 
-3. **Run the development server**
+Run the full Tauri development app:
 
 ```bash
 npm run tauri:dev
 ```
 
-The first build will take a few minutes as Rust compiles all dependencies.
+Run only the Vite frontend:
+
+```bash
+npm run dev
+```
 
 ## Usage
 
-### Scanning a Directory
+### Import Media
 
-1. Launch the application
-2. Enter a directory path in the input field (e.g., `/Users/YourName/Pictures`)
-3. Click the **Scan** button
-4. Terra will recursively scan the directory and display all images
+1. Launch Terra.
+2. Click **Upload Photos** in the sidebar.
+3. Select one or more supported media files.
+4. Terra copies them into the managed library and indexes them in SQLite.
 
-### View Modes
+Supported import extensions currently include:
 
-- **All Photos**: View all photos in a single grid
-- **Years**: Group photos by year
-- **Months**: Group photos by month and year
+- Images: `jpg`, `jpeg`, `png`, `heic`, `webp`, `gif`, `bmp`
+- Videos: `mp4`, `mov`, `avi`, `webm`, `mkv`
 
-### Viewing Photos
+### Change Library Location
 
-- Click any photo thumbnail to open it in full-screen modal
-- Press the **X** button or click outside to close the modal
-- Hover over thumbnails to see filename and date
+1. Open **Settings** from the sidebar.
+2. Choose a new **Library Storage Path**.
+3. New uploads will use the new path. Existing photos remain where they already are.
+
+### Browse and Organize
+
+- Use **All Photos**, **Years**, **Months**, **Locations**, **Favorites**, **Photos Only**, and **Videos Only** for built-in views.
+- Create albums from the sidebar and bulk-add selected photos.
+- Create tags, assign them in bulk, and manage tags from the photo modal.
+- Use sidebar search to find photos by filename or location.
+- Use smart collections for size, dimensions, time, and review status.
+
+### Clean Up
+
+- **Find Duplicates** scans for exact and visually similar media.
+- **Find Screenshots** flags likely screenshots by filename and dimensions.
+- **View Archive** restores archived items before they are permanently cleaned up.
+- **TerraForm Review** provides a fast keep/archive triage workflow.
+- **Storage Analytics** shows where local disk space is going and highlights large or duplicate media.
 
 ## Project Structure
 
-```
+```text
 terra/
 ├── src/                    # React frontend
-│   ├── App.jsx            # Main application component
-│   ├── main.jsx           # React entry point
-│   └── index.css          # Global styles with Tailwind
-├── src-tauri/             # Rust backend
+│   ├── components/         # Gallery, sidebar, modals, review and analytics UI
+│   ├── contexts/           # App, view, and selection providers
+│   ├── hooks/              # Photo, album, tag, cleanup, and selection state
+│   ├── utils/              # Frontend helpers
+│   ├── App.jsx             # Main application composition
+│   └── main.jsx            # React entry point
+├── src-tauri/              # Rust/Tauri backend
 │   ├── src/
-│   │   ├── lib.rs         # Core library with scan_directory command
-│   │   └── main.rs        # Desktop entry point
-│   ├── Cargo.toml         # Rust dependencies
-│   └── tauri.conf.json    # Tauri configuration
-├── index.html             # HTML entry point
-├── vite.config.js         # Vite configuration
-├── tailwind.config.js     # Tailwind CSS configuration
-└── package.json           # Node.js dependencies and scripts
+│   │   ├── lib.rs          # Tauri commands and media processing
+│   │   ├── db.rs           # SQLite schema and queries
+│   │   └── main.rs         # Desktop entry point
+│   ├── Cargo.toml          # Rust dependencies
+│   └── tauri.conf.json     # Tauri configuration
+├── docs/
+│   ├── IMPLEMENTATION_PLAN.md
+│   └── ROADMAP.md
+├── package.json
+└── vite.config.js
 ```
 
-## Building for Production
+## Development Commands
 
 ```bash
-npm run tauri:build
+npm run dev           # Start Vite only
+npm run tauri:dev     # Start the full desktop app
+npm run build         # Build frontend assets
+npm run tauri:build   # Build the desktop app bundle
+npm run test:run      # Run frontend tests once
 ```
 
-This will create a macOS `.app` bundle in `src-tauri/target/release/bundle/`.
+Rust checks:
 
-## Development
+```bash
+cd src-tauri
+cargo test
+cargo check
+```
 
-### Available Scripts
+## Verification
 
-- `npm run dev` - Start Vite development server only
-- `npm run tauri:dev` - Start full Tauri development environment
-- `npm run build` - Build frontend for production
-- `npm run tauri:build` - Build complete application bundle
+After installing dependencies, the standard checks are:
 
-### Adding New Features
+```bash
+npm run test:run      # frontend unit tests
+npm run build         # frontend build
+cd src-tauri
+cargo test            # backend unit tests
+cargo check           # backend type/lint check
+```
 
-The application is designed to be extensible:
+`npm audit` may report dependency advisories that should be reviewed before each release.
 
-1. **Backend Commands**: Add new Rust commands in `src-tauri/src/lib.rs`
-2. **Frontend Components**: Create new React components in `src/`
-3. **Styling**: Extend Tailwind configuration in `tailwind.config.js`
+## Known Limitations
 
-## Performance Optimization
-
-Terra is built for performance:
-
-- **Parallel Processing**: Uses all CPU cores via Rayon
-- **Lazy Loading**: Images load only when visible
-- **Efficient EXIF Reading**: Streams file data without loading entire images
-- **Future**: Virtual scrolling for 50,000+ image libraries
+- The gallery is not virtualized yet; very large libraries can create too many DOM nodes.
+- Terra displays original local media files rather than a generated thumbnail cache.
+- Similar-duplicate detection uses pairwise perceptual hash comparison and may need indexing for very large libraries.
+- HEIC support depends on available image decoding support in the Rust image stack.
+- Cloud/social import buttons are placeholders; no Google, iCloud, Dropbox, or Snapchat import flow is implemented yet.
+- The Tauri asset scope is intentionally broad for local-library development and should be tightened before broader distribution.
 
 ## Roadmap
 
-- [ ] SQLite caching for instant startup
-- [ ] Virtual scrolling (react-window integration)
-- [ ] iCloud Photos integration
-- [ ] Google Photos integration
-- [ ] Search and filtering
-- [ ] Favorites and collections
-- [ ] Face detection and grouping
-- [ ] Video support
-- [ ] Photo editing capabilities
+See `docs/ROADMAP.md` for the next planned sequence:
 
-## Known Issues
-
-- First scan can be slow on very large directories (10,000+ images)
-- HEIC format support depends on system image libraries
-- Some EXIF formats may not parse correctly
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
+1. Thumbnail generation plus virtualized gallery rendering.
+2. Generic import job system.
+3. Google Photos Takeout folder/ZIP import.
+4. Apple Photos/iCloud import path.
+5. Snapchat/social archive import path.
 
 ## License
 
-MIT License - see LICENSE file for details
-
-## Acknowledgments
-
-- Built with [Tauri](https://tauri.app/)
-- UI icons from [Lucide](https://lucide.dev/)
-- Inspired by modern photo management applications with a unique aesthetic twist
-
----
-
-<div align="center">
-
-**Built with ❤️ using Rust and React**
-
-</div>
+MIT License - see `LICENSE` for details.
