@@ -2,6 +2,8 @@ import { createContext, useContext, useState, useMemo, useEffect, useRef } from 
 import { invoke } from '@tauri-apps/api/core';
 import { processPhotos } from '../utils/photoHelpers';
 import { groupPhotosBy } from '../utils/groupPhotos';
+import { filterForViewMode } from '../utils/viewFilter';
+import { CONFIG } from '../config';
 import { useAppContext } from './AppContext';
 
 const ViewContext = createContext(null);
@@ -26,6 +28,10 @@ export function ViewProvider({ children }) {
   const wasFilteredViewRef = useRef(false);
   const prevGroupKeysRef = useRef('');
   const isMountedRef = useRef(true);
+  // Tracks the last server-side filter we requested in paginated mode, so
+  // pure-presentation switches (all → year → month → locations) skip the
+  // round-trip while filter changes (all → favorites) trigger a reload.
+  const lastFilterKindRef = useRef('all');
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -94,6 +100,27 @@ export function ViewProvider({ children }) {
   useEffect(() => {
     const load = async () => {
       try {
+        // Paginated path (P.3): for built-in views, derive a server-side
+        // ViewFilter and reload only when the filter kind actually changes.
+        // Pure regrouping (year/month/locations all map to ::All) is a
+        // no-op so users don't pay a round-trip for view-mode switches.
+        if (CONFIG.USE_PAGINATION) {
+          const filter = filterForViewMode(viewMode);
+          if (filter) {
+            wasFilteredViewRef.current = false;
+            if (filter.kind !== lastFilterKindRef.current) {
+              lastFilterKindRef.current = filter.kind;
+              await loadPhotosFromDatabase(filter);
+            }
+            return;
+          }
+          // Filter is null → an album / tag / search / collection / duplicates
+          // view that hasn't been migrated yet. Fall through to the legacy
+          // direct-fetch branches below; on return to a paginated view, the
+          // filter-kind change will trigger a fresh first page.
+          lastFilterKindRef.current = '';
+        }
+
         if (viewMode.startsWith('album:')) {
           wasFilteredViewRef.current = true;
           setLoading(true);

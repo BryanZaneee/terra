@@ -68,6 +68,18 @@ default. Added an unmount guard to `usePagedPhotos` while committing it.
 without replacing filtered/gallery-specific flows yet. The legacy
 `get_all_photos` path remains the default until P.3-P.6 complete.
 
+### 2026-04-28 — Pagination built-in filters checkpoint
+
+**What:** Extended the paginated `ViewFilter` surface to favorites, archived,
+unreviewed, photos-only, and videos-only. Added backend filter tests plus a
+small `viewFilter.js` mapper so built-in presentation views can move onto the
+server-side paginated path behind `CONFIG.USE_PAGINATION`.
+
+**Why still behind the flag:** albums, tags, search, smart collections, and
+duplicate/review flows still use legacy one-shot fetches. Keeping pagination
+off by default prevents partially migrated filtering from changing normal app
+behavior while the backend query surface grows.
+
 ---
 
 ## Active Effort: Polish to iOS / Google Photos Parity (started 2026-04-27)

@@ -1298,11 +1298,20 @@ const IS_VIDEO_SQL: &str = "(LOWER(name) LIKE '%.mp4' OR \
      LOWER(name) LIKE '%.webm' OR \
      LOWER(name) LIKE '%.mkv')";
 
-/// Translate a `ViewFilter` into a SQL WHERE clause fragment that excludes
-/// archived rows by default. P.3–P.4 grow this match arm.
+/// Translate a `ViewFilter` into a SQL WHERE clause fragment.
+///
+/// All non-archive filters exclude `archived_at IS NOT NULL` rows so the
+/// archive sits in its own bucket; otherwise archived photos would leak into
+/// every other view. P.4 will grow this match arm with Tag/Album/Location/
+/// SmartCollection/Search variants.
 fn filter_where_clause(filter: &ViewFilter) -> String {
     match filter {
         ViewFilter::All => "archived_at IS NULL".to_string(),
+        ViewFilter::Favorites => "archived_at IS NULL AND is_favorite = 1".to_string(),
+        ViewFilter::Archived => "archived_at IS NOT NULL".to_string(),
+        ViewFilter::Unreviewed => "archived_at IS NULL AND reviewed_at IS NULL".to_string(),
+        ViewFilter::PhotosOnly => format!("archived_at IS NULL AND NOT {}", IS_VIDEO_SQL),
+        ViewFilter::VideosOnly => format!("archived_at IS NULL AND {}", IS_VIDEO_SQL),
     }
 }
 
@@ -1908,6 +1917,99 @@ mod tests {
         for key in ["all", "favorites", "archived", "unreviewed", "photos_only", "videos_only"] {
             assert_eq!(counts.get(key).copied(), Some(0), "{} should be 0", key);
         }
+    }
+
+    #[test]
+    fn paged_favorites_filter_only_returns_favorites() {
+        let conn = setup_db();
+        insert_dated(&conn, "/p/a.jpg", "a.jpg", 1000);
+        insert_dated(&conn, "/p/b.jpg", "b.jpg", 1001);
+        insert_dated(&conn, "/p/c.jpg", "c.jpg", 1002);
+        set_photo_favorite(&conn, "/p/b.jpg", true).unwrap();
+        set_photo_favorite(&conn, "/p/c.jpg", true).unwrap();
+
+        let result = get_photos_page(&conn, &ViewFilter::Favorites, None, 50).unwrap();
+        let paths: Vec<&str> = result.photos.iter().map(|p| p.path.as_str()).collect();
+        assert_eq!(paths, vec!["/p/c.jpg", "/p/b.jpg"]);
+    }
+
+    #[test]
+    fn paged_archived_filter_only_returns_archived() {
+        let conn = setup_db();
+        insert_dated(&conn, "/p/keep.jpg", "keep.jpg", 1000);
+        insert_dated(&conn, "/p/gone.jpg", "gone.jpg", 1001);
+        archive_photo(&conn, "/p/gone.jpg").unwrap();
+
+        let result = get_photos_page(&conn, &ViewFilter::Archived, None, 50).unwrap();
+        assert_eq!(result.photos.len(), 1);
+        assert_eq!(result.photos[0].path, "/p/gone.jpg");
+    }
+
+    #[test]
+    fn paged_unreviewed_filter_excludes_reviewed_and_archived() {
+        let conn = setup_db();
+        insert_dated(&conn, "/p/new.jpg", "new.jpg", 1000);
+        insert_dated(&conn, "/p/seen.jpg", "seen.jpg", 1001);
+        insert_dated(&conn, "/p/dead.jpg", "dead.jpg", 1002);
+        mark_photo_reviewed(&conn, "/p/seen.jpg").unwrap();
+        archive_photo(&conn, "/p/dead.jpg").unwrap();
+
+        let result = get_photos_page(&conn, &ViewFilter::Unreviewed, None, 50).unwrap();
+        assert_eq!(result.photos.len(), 1);
+        assert_eq!(result.photos[0].path, "/p/new.jpg");
+    }
+
+    #[test]
+    fn paged_videos_only_returns_videos_by_extension() {
+        let conn = setup_db();
+        insert_dated(&conn, "/p/photo.jpg", "photo.jpg", 1000);
+        insert_dated(&conn, "/p/clip.MP4", "clip.MP4", 1001); // case-insensitive
+        insert_dated(&conn, "/p/movie.mov", "movie.mov", 1002);
+
+        let result = get_photos_page(&conn, &ViewFilter::VideosOnly, None, 50).unwrap();
+        let paths: Vec<&str> = result.photos.iter().map(|p| p.path.as_str()).collect();
+        assert_eq!(paths, vec!["/p/movie.mov", "/p/clip.MP4"]);
+    }
+
+    #[test]
+    fn paged_photos_only_excludes_videos() {
+        let conn = setup_db();
+        insert_dated(&conn, "/p/photo.jpg", "photo.jpg", 1000);
+        insert_dated(&conn, "/p/clip.mp4", "clip.mp4", 1001);
+
+        let result = get_photos_page(&conn, &ViewFilter::PhotosOnly, None, 50).unwrap();
+        assert_eq!(result.photos.len(), 1);
+        assert_eq!(result.photos[0].path, "/p/photo.jpg");
+    }
+
+    #[test]
+    fn paged_filter_pages_walk_through_all_matches() {
+        // Confirms cursor + filter compose: walking the favorites view across
+        // multiple pages must visit every favorite exactly once.
+        let conn = setup_db();
+        for i in 0..10 {
+            insert_dated(&conn, &format!("/p/{:02}.jpg", i), &format!("{:02}.jpg", i), 1000 + i);
+            if i % 2 == 0 {
+                set_photo_favorite(&conn, &format!("/p/{:02}.jpg", i), true).unwrap();
+            }
+        }
+
+        let mut seen = Vec::new();
+        let mut cursor: Option<Cursor> = None;
+        loop {
+            let result = get_photos_page(&conn, &ViewFilter::Favorites, cursor.as_ref(), 2).unwrap();
+            seen.extend(result.photos.iter().map(|p| p.path.clone()));
+            match result.next_cursor {
+                Some(c) => cursor = Some(c),
+                None => break,
+            }
+        }
+        // 5 favorites: indices 0,2,4,6,8.
+        assert_eq!(seen.len(), 5);
+        let mut deduped = seen.clone();
+        deduped.sort();
+        deduped.dedup();
+        assert_eq!(deduped.len(), 5);
     }
 
     #[test]

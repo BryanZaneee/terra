@@ -24,13 +24,17 @@ export function usePagedPhotos({ setPhotos, setLoading, setError }) {
     isMountedRef.current = false;
   }, []);
 
-  const loadFirstPage = useCallback(async (filter = { kind: 'all' }) => {
-    filterRef.current = filter;
+  const loadFirstPage = useCallback(async (filter) => {
+    // Undefined `filter` means "reuse the last filter" — used by the cleanup
+    // hook after archive/delete mutations to refresh the current view in
+    // place. The ref defaults to All on first render so initial mount works.
+    if (filter !== undefined) filterRef.current = filter;
+    const activeFilter = filterRef.current;
     setLoading(true);
     if (setError) setError(null);
     try {
       const result = await invoke('get_photos_page', {
-        filter,
+        filter: activeFilter,
         cursor: null,
         limit: CONFIG.PAGE_SIZE,
       });

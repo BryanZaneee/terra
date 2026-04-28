@@ -138,11 +138,16 @@ pub struct ProviderImportProgress {
 
 /// Discriminates which slice of the library a page query targets.
 /// SQL builder in db::get_photos_page branches on this.
-/// P.1 ships only `All`; P.3–P.4 fill in the rest.
+/// P.4 will add Tag/Album/Location/SmartCollection/Search variants.
 #[derive(Deserialize, Debug, Clone)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ViewFilter {
     All,
+    Favorites,
+    Archived,
+    Unreviewed,
+    PhotosOnly,
+    VideosOnly,
 }
 
 /// Cursor onto a row, by `(date_taken, id)`. Carrying both makes the walk

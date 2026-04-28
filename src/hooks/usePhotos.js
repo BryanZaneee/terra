@@ -43,13 +43,12 @@ export function usePhotos() {
     };
   }, []);
 
-  const loadPhotosFromDatabase = useCallback(async () => {
+  const loadPhotosFromDatabase = useCallback(async (filter = { kind: 'all' }) => {
     if (!isMountedRef.current) return;
     if (CONFIG.USE_PAGINATION) {
-      // P.2: paginated path is wired only for the All view. Filtered views
-      // (album, tags, search) still bypass this and call setPhotos directly
-      // until P.3–P.4 extend the filter enum.
-      await paged.loadFirstPage({ kind: 'all' });
+      // P.3: built-in views now pass a ViewFilter; album, tag, search, and
+      // smart collections still bypass this until P.4.
+      await paged.loadFirstPage(filter);
       return;
     }
     setLoading(true);
