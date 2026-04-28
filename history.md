@@ -1,9 +1,255 @@
-# Terra Refactor History
+# Terra Engineering History
 
 This file is maintained for future agents working on Terra. It records what
 changed and *why*, especially decisions that aren't obvious from the diff.
 
-## Active Effort: Open-Source Simplification (started 2026-04-26)
+Newest active effort first; completed efforts kept below for context.
+
+---
+
+## Active Effort: Polish to iOS / Google Photos Parity (started 2026-04-27)
+
+**Goal.** Bring Terra's UX polish and feature surface up to a level that
+feels comparable to iOS Photos and Google Photos for a single-user, local,
+macOS context. We are explicitly *not* chasing cloud sync, shared albums,
+face detection, or RAW workflows — those trade-offs are documented in
+`docs/POLISH_PLAN.md`.
+
+**Approved plan.** `docs/POLISH_PLAN.md` (six phases A–F + deferred section).
+
+### Sequencing
+
+| Phase | Title | Status |
+|------|-------|--------|
+| A | Photo modal polish, keyboard, skeletons, errors, tooltips | done |
+| E (camera/lens/video) | Python + exiftool metadata enrichment | done |
+| B | Thumbnails + virtualization | next |
+| C | Discovery (FTS, filters, memories, map) | pending |
+| D | Imports (Takeout, Apple, Snapchat) | pending |
+| E (rest) | Date editing, video thumbnails, HEIC | pending |
+| F | Light editing | optional |
+
+Detailed entries appear below as each item lands.
+
+### Deliberately NOT doing (resisted scope creep)
+
+- **Face detection / OCR.** Both require an ML stack (candle or
+  onnx-runtime + a model) or a Swift sidecar to macOS Vision. Real binary
+  size and complexity cost. Revisit after the import pipeline ships and
+  we have signal on what users actually want.
+- **Cloud sync, shared albums.** Contradicts the local-first design.
+  Out of scope.
+- **EXIF write-back.** Date-taken edits will live in DB only for now.
+  rexif is read-only; writing tags requires shelling to exiftool with
+  `-overwrite_original` or pulling in a different crate. Defer until
+  Phase E.4.
+- **Bundling exiftool.** ~30MB. We surface a `brew install exiftool`
+  hint instead. Will revisit at first DMG release.
+- **Bundling a Python interpreter.** PyO3 was considered for the
+  metadata pipeline; rejected (binary bloat + crash coupling). Subprocess
+  to system `python3` matches the OS-level dependency tradeoff we
+  already make for `open` (reveal-in-Finder).
+
+### Key decisions
+
+- **PhotoMetadata stays a single struct, not split per-feature.** New
+  enrichment fields (camera_make, etc.) are `Option<T>` with
+  `#[serde(skip_serializing_if = "Option::is_none")]` so the wire
+  format stays identical for unenriched photos. Splitting into a parent
+  struct + child enrichment struct would require either a join in every
+  query or two round-trips per photo, neither of which is worth the
+  conceptual tidiness.
+- **Cache strategy for thumbnails (Phase B, upcoming): content-addressed.**
+  Decision recorded ahead of implementation. Thumbnail filenames will be
+  derived from `content_hash` (already in DB) so we never have stale
+  entries when a photo moves, and the cache survives library
+  re-organizations. Side effect: photos without a content hash can't
+  have a thumbnail until they're hashed — fine, since hashing happens at
+  import.
+- **react-virtuoso over react-window for Phase B.** Variable-height
+  grouped layouts (year/month groups, expandable headers) are awkward
+  in react-window's `VariableSizeList` — heights need to be measured and
+  cached manually. react-virtuoso has built-in `<GroupedVirtuoso>` that
+  matches our existing PhotoGrid shape exactly. Bundle weight is
+  comparable (~30KB gzip).
+
+---
+
+### 2026-04-27 — Phase E (partial): Python + exiftool metadata enrichment
+
+**What:** new `scripts/extract_metadata.py` (Python + exiftool
+subprocess), Rust caller in `src-tauri/src/metadata_enrich.rs`, two
+Tauri commands (`enrich_photo_metadata`, `enrich_all_metadata`), 10 new
+SQLite columns (`camera_make`, `camera_model`, `lens_model`, `iso`,
+`aperture`, `shutter_us`, `focal_length_mm`, `orientation`,
+`duration_ms`, `codec`) with a composite `idx_camera` index. Settings
+modal gets an "Enrich All Photos" button with live progress bar driven
+by `metadata_enrich_progress` events, plus an exiftool-install hint
+when the binary is missing. PhotoModal info drawer auto-shows Camera,
+Lens, Exposure (f-stop / shutter / ISO / focal length on one row),
+Duration, and Codec rows when fields are populated.
+
+**Why Python middleware over native Rust:** the user asked for Python
+specifically; the second-order benefits made the choice easy:
+
+1. The script can be iterated without recompiling Rust.
+2. We can later add ML-based scene/face inference on the Python side
+   without bloating the Rust binary or changing the Rust surface.
+3. exiftool is the gold-standard metadata extractor (HEIC, RAW, video
+   duration/codec, all the EXIF fields we'd otherwise hand-roll). Wrapping
+   it from Python is cheap; wrapping from Rust would recreate the same
+   subprocess pattern with worse error ergonomics.
+
+**Why subprocess over PyO3 embedding:** PyO3 binds a Python interpreter
+into the Rust binary. That would balloon binary size by ~30MB,
+complicate distribution (requires bundling Python stdlib), and couple
+Python crashes to the host process. Subprocess isolation is cheap and
+matches Tauri's existing pattern (we already shell out to `open` for
+reveal-in-Finder).
+
+**Why exiftool over Pillow / pyexiv2 / hachoir:** Pillow and pyexiv2
+require pip install (we want stdlib-only Python). Hachoir is pure-Python
+but not as comprehensive on video codecs. exiftool is a single Perl-based
+binary, available via Homebrew, with the broadest format coverage. We
+trade "user must install exiftool" for "no Python dep tree."
+
+**Why DB columns over JSON blob:** stored as discrete columns so SQLite
+can index them and downstream filters can `WHERE camera_make = ?` without
+a JSON1 extension or `json_extract`. Composite `idx_camera` covers the
+common (make, model) filter pair we expect for "iPhone 15 Pro" style
+queries.
+
+**Why `Option<T>` + `#[serde(skip_serializing_if = "Option::is_none")]`
+on every new field:** the wire format stays identical for unenriched
+photos, so old library DBs serialize the same as before. No frontend
+churn, no migration of existing JSON in tests. Frontend conditionals
+already render rows only when present.
+
+**Why bundle the script as a Tauri resource:**
+`bundle.resources: ["../scripts"]` ships the script into
+`<app>/Contents/Resources/scripts/`. Rust resolves
+`app.path().resource_dir()` first, falls back to
+`CARGO_MANIFEST_DIR/scripts/` for dev mode. Resources let us update the
+script via auto-update (when we add it) without a new Rust binary.
+
+**Files added/changed.**
+- New: `scripts/extract_metadata.py`,
+  `scripts/test_extract_metadata.py`,
+  `src-tauri/src/metadata_enrich.rs`.
+- Changed: `src-tauri/src/db.rs` (10 columns, idx_camera, expanded
+  `photo_from_row`, all 8 SELECT-returning queries),
+  `src-tauri/src/lib.rs` (PhotoMetadata fields + 2 commands +
+  registration), `src-tauri/src/media.rs` (struct literal extended with
+  None for new fields), `src-tauri/tauri.conf.json` (bundle.resources),
+  `src/utils/photoHelpers.js` (spread instead of explicit field list),
+  `src/components/PhotoModal.jsx` (info drawer rows for Camera/Lens/
+  Exposure/Duration/Codec), `src/components/SettingsModal.jsx` (enrich
+  button + progress bar + error hint).
+
+**Verification.** Python: 8/8 unittest. Rust: 51/51 cargo test, cargo
+check clean. Frontend: 147/147 vitest.
+
+**Deferred (tracked above).** EXIF write-back for date editing.
+Bundling exiftool. Filter UI for camera/lens/ISO (lives in Phase C
+when we add the filter chip bar).
+
+---
+
+### 2026-04-27 — Phase A: photo modal, keyboard, skeletons, errors, tooltips
+
+**What:** complete rewrite of `PhotoModal.jsx` (54 → ~440 lines) with
+arrow-key + chevron navigation, wheel zoom around cursor, drag-to-pan,
+double-click fit/100% toggle, slide-in info drawer (`i`), action bar
+(favorite/info/album/tag/archive/delete/reveal-in-finder), keyboard
+shortcuts (`f`/`i`/`o`/Backspace/Cmd+Backspace), and a focus trap. New
+hooks: `useFocusTrap` and `useKeyboardShortcuts` (global `/`, `g`, `Esc`).
+New `<Skeleton>` component for cold-load gallery state. New `<Tooltip>`
+component used on every action button. Rust error messages now propagate
+through six catch blocks instead of being swallowed. New
+`reveal_in_finder` Tauri command. New `cycleViewMode` exposed from
+`ViewContext`.
+
+**Why the agent swarm:** Phase A had three independent slices —
+PhotoModal rewrite (one file, big), keyboard hook (one file, isolated),
+skeleton + error propagation (different files entirely). Spawning three
+parallel `developer` agents on non-overlapping file sets cut wall time
+roughly in half. The conflict matrix was clean by design — each agent's
+prompt listed its files and explicit "do NOT touch" sets.
+
+**Why custom focus trap (~65 LOC) over `focus-trap-react`:** a 65-line
+hook is cheaper than +1 npm dep + bundle weight. Reusable across the
+other modals later (CreateAlbum/AddToAlbum/Settings/etc. don't trap
+focus today — that's a quick follow-up).
+
+**Why disable the global keyboard hook while PhotoModal is open
+(`enabled: !selectedPhoto`):** PhotoModal has its own keydown listener
+for arrow/k/j/f/i/o/Delete navigation. Without gating, both listeners
+would fire on Esc — PhotoModal would close, then the global handler
+would try to close some other modal that may not be open. Cheaper to
+gate at the parent than coordinate via stop-propagation.
+
+**Why three TODOs left in PhotoModal action wiring (single-photo
+add-to-album, tag-assign, album memberships):** those required
+threading new state through existing AddToAlbumModal / TagAssignPopover
+components. Not on the critical path for Phase A's core polish goals
+(nav + zoom + info + delete + archive + reveal). About 30 minutes each
+to wire up; flagged in code so they don't get forgotten.
+
+**Why skeleton uses `animate-pulse` instead of a custom shimmer
+keyframe:** Tailwind's built-in pulse is mechanically simpler, no
+keyframe maintenance, equivalent perceived load feedback. Not trying to
+win a design award — trying to stop showing one spinner for the whole
+gallery.
+
+**Why error message propagation pattern is `typeof err === 'string' ?
+err : err?.message ?? <fallback>`:** Tauri commands returning
+`Result<_, String>` deliver the error string directly to JS as a plain
+string (not an Error object). Older catch blocks fell through to a
+generic "Upload failed" because they assumed err was an Error. The new
+pattern preserves the Rust-side context (e.g., "Cannot decode HEIC...")
+that's actionable for the user.
+
+**Why custom Tailwind tooltip over HTML `title`:** the `title` attribute
+shows the OS-styled tooltip after a ~1s delay. Our custom Tooltip is
+glassmorphic (matches the rest of the design system), shows immediately
+on hover, and includes the keyboard shortcut inline (e.g., "Favorite
+(F)"). ~25 LOC, reusable.
+
+**Why named Tailwind group (`group/tooltip`):** PhotoModal's prev/next
+nav uses an unnamed `group` for "fade in chevron when area is hovered."
+Naming the tooltip's group avoids collision so both behaviors coexist
+on the same DOM tree.
+
+**Why `processPhotos` switched from explicit field list to spread
+(`...p`) + overrides:** the explicit list was silently dropping
+`latitude`, `longitude`, `file_size`, `source_type`, and any future
+backend field. The new info drawer needed those, so the rewrite would
+have had to re-add them anyway. Spread is forward-compatible — fields
+the Python enrichment adds (camera_make, etc.) flow through
+automatically without touching this file again.
+
+**Files added/changed.**
+- New: `src/components/Skeleton.jsx`, `Skeleton.test.jsx`,
+  `src/components/Tooltip.jsx`, `Tooltip.test.jsx`,
+  `src/hooks/useFocusTrap.js`, `useFocusTrap.test.jsx`,
+  `src/hooks/useKeyboardShortcuts.js`, `useKeyboardShortcuts.test.js`,
+  `docs/POLISH_PLAN.md`.
+- Changed: `src/components/PhotoModal.jsx`, `PhotoModal.test.jsx`,
+  `src/components/PhotoGrid.jsx`, `PhotoGrid.test.jsx`,
+  `src/components/Sidebar.jsx`, `src/contexts/ViewContext.jsx`
+  (cycleViewMode), `src/App.jsx` (props + hook wiring + searchInputRef),
+  `src/hooks/usePhotos.js`, `src/hooks/useCleanup.js` (error
+  propagation), `src-tauri/src/lib.rs` (reveal_in_finder).
+
+**Verification.** Cargo check clean. `cargo test` 48/48. Frontend
+143/143 (later 147/147 once Tooltip tests landed).
+
+**Deferred.** Focus trap on the other modals (the hook is reusable —
+quick follow-up).
+
+---
+
+## Completed Effort: Open-Source Simplification (2026-04-26, shipped)
 
 **Goal.** Prepare Terra for a public open-source release. Make the code easy to
 read for a first-time contributor without over-engineering the simplification
