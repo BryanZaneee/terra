@@ -1,7 +1,8 @@
 use rusqlite::{Connection, Result as SqlResult, params};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use dirs;
-use crate::PhotoMetadata;
+use crate::{Cursor, PageResult, PhotoMetadata, ViewFilter};
 
 /// Get the path to the Terra database file
 pub fn get_db_path() -> PathBuf {
@@ -168,6 +169,14 @@ pub fn init_schema(conn: &Connection) -> SqlResult<()> {
     // Composite index to support filtering by camera make/model
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_camera ON photos(camera_make, camera_model)",
+        [],
+    )?;
+
+    // Composite index for cursor-paginated walks (PAGINATION_PLAN.md).
+    // Matches the exact ORDER BY of get_photos_page, so the cursor predicate
+    // becomes an index seek instead of a full-table scan.
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_date_id ON photos(date_taken DESC, id DESC)",
         [],
     )?;
 
@@ -1277,6 +1286,142 @@ pub fn get_photos_without_file_size(conn: &Connection) -> SqlResult<Vec<String>>
     rows.collect()
 }
 
+// ============================================================================
+// Pagination (PAGINATION_PLAN.md)
+// ============================================================================
+
+/// SQL fragment that's true for video files. Used by both view counts and
+/// page filters once `PhotosOnly`/`VideosOnly` land in P.3.
+const IS_VIDEO_SQL: &str = "(LOWER(name) LIKE '%.mp4' OR \
+     LOWER(name) LIKE '%.mov' OR \
+     LOWER(name) LIKE '%.avi' OR \
+     LOWER(name) LIKE '%.webm' OR \
+     LOWER(name) LIKE '%.mkv')";
+
+/// Translate a `ViewFilter` into a SQL WHERE clause fragment that excludes
+/// archived rows by default. P.3–P.4 grow this match arm.
+fn filter_where_clause(filter: &ViewFilter) -> String {
+    match filter {
+        ViewFilter::All => "archived_at IS NULL".to_string(),
+    }
+}
+
+/// Cursor-paginated photo query.
+///
+/// Returns up to `limit` rows in DESC order on `(date_taken, id)`. Internally
+/// fetches `limit + 1` to detect whether more pages exist without a separate
+/// COUNT round-trip; the extra row is dropped from the response and the last
+/// kept row's position becomes `next_cursor`.
+///
+/// Cursors are exclusive: the next page query is strictly less than this
+/// position, which keeps the walk stable across deletes between calls.
+pub fn get_photos_page(
+    conn: &Connection,
+    filter: &ViewFilter,
+    cursor: Option<&Cursor>,
+    limit: i64,
+) -> SqlResult<PageResult> {
+    if limit <= 0 {
+        return Ok(PageResult { photos: Vec::new(), next_cursor: None });
+    }
+
+    let where_clause = filter_where_clause(filter);
+    let limit_plus_one = limit + 1;
+
+    // Two query shapes — with or without cursor — keep parameter binding
+    // straightforward without dynamic Vec<Box<dyn ToSql>>.
+    let (sql, rows): (String, Vec<(PhotoMetadata, i64)>) = match cursor {
+        Some(c) => {
+            let sql = format!(
+                "SELECT {}, id FROM photos WHERE {} \
+                 AND (date_taken < ?1 OR (date_taken = ?1 AND id < ?2)) \
+                 ORDER BY date_taken DESC, id DESC LIMIT ?3",
+                PHOTO_COLUMNS, where_clause
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt
+                .query_map(params![c.date_taken, c.id, limit_plus_one], |row| {
+                    Ok((photo_from_row(row)?, row.get::<_, i64>(21)?))
+                })?
+                .collect::<SqlResult<Vec<_>>>()?;
+            (sql, rows)
+        }
+        None => {
+            let sql = format!(
+                "SELECT {}, id FROM photos WHERE {} \
+                 ORDER BY date_taken DESC, id DESC LIMIT ?1",
+                PHOTO_COLUMNS, where_clause
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt
+                .query_map(params![limit_plus_one], |row| {
+                    Ok((photo_from_row(row)?, row.get::<_, i64>(21)?))
+                })?
+                .collect::<SqlResult<Vec<_>>>()?;
+            (sql, rows)
+        }
+    };
+    let _ = sql; // silence unused-binding warning when no logging
+
+    let (photos, next_cursor) = if rows.len() > limit as usize {
+        // limit+1 came back — at least one more page exists. Drop the
+        // probe row; the last kept row's (date_taken, id) anchors the
+        // next page boundary.
+        let mut kept: Vec<(PhotoMetadata, i64)> = rows;
+        kept.truncate(limit as usize);
+        let (last_photo, last_id) = kept.last().expect("limit > 0 means kept is non-empty");
+        let next = Cursor { date_taken: last_photo.date_taken, id: *last_id };
+        (kept.into_iter().map(|(p, _)| p).collect(), Some(next))
+    } else {
+        (rows.into_iter().map(|(p, _)| p).collect(), None)
+    };
+
+    Ok(PageResult { photos, next_cursor })
+}
+
+/// Top-level counts the sidebar reads instead of `photos.length`.
+/// Each value is one indexed COUNT(*); per-album and per-tag maps land in P.5.
+pub fn get_view_counts(conn: &Connection) -> SqlResult<HashMap<String, i64>> {
+    let mut counts = HashMap::new();
+
+    let scalar = |sql: &str| -> SqlResult<i64> {
+        conn.query_row(sql, [], |row| row.get(0))
+    };
+
+    counts.insert(
+        "all".to_string(),
+        scalar("SELECT COUNT(*) FROM photos WHERE archived_at IS NULL")?,
+    );
+    counts.insert(
+        "favorites".to_string(),
+        scalar("SELECT COUNT(*) FROM photos WHERE archived_at IS NULL AND is_favorite = 1")?,
+    );
+    counts.insert(
+        "archived".to_string(),
+        scalar("SELECT COUNT(*) FROM photos WHERE archived_at IS NOT NULL")?,
+    );
+    counts.insert(
+        "unreviewed".to_string(),
+        scalar("SELECT COUNT(*) FROM photos WHERE archived_at IS NULL AND reviewed_at IS NULL")?,
+    );
+    counts.insert(
+        "videos_only".to_string(),
+        scalar(&format!(
+            "SELECT COUNT(*) FROM photos WHERE archived_at IS NULL AND {}",
+            IS_VIDEO_SQL
+        ))?,
+    );
+    counts.insert(
+        "photos_only".to_string(),
+        scalar(&format!(
+            "SELECT COUNT(*) FROM photos WHERE archived_at IS NULL AND NOT {}",
+            IS_VIDEO_SQL
+        ))?,
+    );
+
+    Ok(counts)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1634,5 +1779,159 @@ mod tests {
 
         let value = get_setting(&conn, "theme");
         assert_eq!(value.as_deref(), Some("dark"));
+    }
+
+    // ====================================================================
+    // Pagination tests (PAGINATION_PLAN.md, P.1)
+    // ====================================================================
+
+    /// Insert a photo whose date_taken we control. Used by pagination tests
+    /// to walk a deterministic ordering and to construct tied dates.
+    fn insert_dated(conn: &Connection, path: &str, name: &str, date_taken: i64) {
+        let mut p = test_photo(path, name);
+        p.date_taken = date_taken;
+        insert_photo(conn, &p, "upload").unwrap();
+    }
+
+    #[test]
+    fn paged_empty_library_returns_no_cursor() {
+        let conn = setup_db();
+        let result = get_photos_page(&conn, &ViewFilter::All, None, 50).unwrap();
+        assert!(result.photos.is_empty());
+        assert!(result.next_cursor.is_none());
+    }
+
+    #[test]
+    fn paged_under_limit_returns_no_cursor() {
+        let conn = setup_db();
+        for i in 0..3 {
+            insert_dated(&conn, &format!("/p/{}.jpg", i), &format!("{}.jpg", i), 1000 + i);
+        }
+        let result = get_photos_page(&conn, &ViewFilter::All, None, 10).unwrap();
+        assert_eq!(result.photos.len(), 3);
+        assert!(result.next_cursor.is_none());
+    }
+
+    #[test]
+    fn paged_exact_limit_returns_no_cursor() {
+        let conn = setup_db();
+        for i in 0..5 {
+            insert_dated(&conn, &format!("/p/{}.jpg", i), &format!("{}.jpg", i), 1000 + i);
+        }
+        let result = get_photos_page(&conn, &ViewFilter::All, None, 5).unwrap();
+        assert_eq!(result.photos.len(), 5);
+        assert!(
+            result.next_cursor.is_none(),
+            "exactly `limit` rows means no further page exists"
+        );
+    }
+
+    #[test]
+    fn paged_walk_visits_every_row_exactly_once() {
+        let conn = setup_db();
+        // 12 rows with distinct dates, walked in pages of 5 → 5 + 5 + 2.
+        for i in 0..12 {
+            insert_dated(&conn, &format!("/p/{:02}.jpg", i), &format!("{:02}.jpg", i), 1000 + i);
+        }
+
+        let mut seen: Vec<String> = Vec::new();
+        let mut cursor: Option<Cursor> = None;
+        loop {
+            let result = get_photos_page(&conn, &ViewFilter::All, cursor.as_ref(), 5).unwrap();
+            seen.extend(result.photos.iter().map(|p| p.path.clone()));
+            match result.next_cursor {
+                Some(c) => cursor = Some(c),
+                None => break,
+            }
+        }
+
+        assert_eq!(seen.len(), 12, "must see every row exactly once");
+        let mut deduped = seen.clone();
+        deduped.sort();
+        deduped.dedup();
+        assert_eq!(deduped.len(), 12, "no row should appear twice");
+
+        // Order is DESC by date_taken — newest path "11.jpg" first, oldest last.
+        assert_eq!(seen.first().unwrap(), "/p/11.jpg");
+        assert_eq!(seen.last().unwrap(), "/p/00.jpg");
+    }
+
+    #[test]
+    fn paged_handles_ties_on_date_taken() {
+        let conn = setup_db();
+        // 6 rows all sharing the same date_taken — id is the tie-breaker.
+        for i in 0..6 {
+            insert_dated(&conn, &format!("/p/tied{}.jpg", i), &format!("tied{}.jpg", i), 2000);
+        }
+        // Two pages of 3. Cursor in the middle must split the tied group cleanly.
+        let first = get_photos_page(&conn, &ViewFilter::All, None, 3).unwrap();
+        assert_eq!(first.photos.len(), 3);
+        let cursor = first.next_cursor.expect("more rows remain");
+
+        let second = get_photos_page(&conn, &ViewFilter::All, Some(&cursor), 3).unwrap();
+        assert_eq!(second.photos.len(), 3);
+        assert!(second.next_cursor.is_none());
+
+        // Combined paths must be the full set, no overlap.
+        let mut seen: Vec<String> = first.photos.iter().chain(second.photos.iter())
+            .map(|p| p.path.clone()).collect();
+        seen.sort();
+        seen.dedup();
+        assert_eq!(seen.len(), 6, "tied dates must not duplicate or skip rows");
+    }
+
+    #[test]
+    fn paged_excludes_archived_from_all() {
+        let conn = setup_db();
+        insert_dated(&conn, "/p/keep.jpg", "keep.jpg", 1000);
+        insert_dated(&conn, "/p/gone.jpg", "gone.jpg", 1001);
+        archive_photo(&conn, "/p/gone.jpg").unwrap();
+
+        let result = get_photos_page(&conn, &ViewFilter::All, None, 50).unwrap();
+        assert_eq!(result.photos.len(), 1);
+        assert_eq!(result.photos[0].path, "/p/keep.jpg");
+    }
+
+    #[test]
+    fn paged_zero_limit_is_a_noop() {
+        let conn = setup_db();
+        insert_dated(&conn, "/p/a.jpg", "a.jpg", 1000);
+        let result = get_photos_page(&conn, &ViewFilter::All, None, 0).unwrap();
+        assert!(result.photos.is_empty());
+        assert!(result.next_cursor.is_none());
+    }
+
+    #[test]
+    fn view_counts_empty_library() {
+        let conn = setup_db();
+        let counts = get_view_counts(&conn).unwrap();
+        for key in ["all", "favorites", "archived", "unreviewed", "photos_only", "videos_only"] {
+            assert_eq!(counts.get(key).copied(), Some(0), "{} should be 0", key);
+        }
+    }
+
+    #[test]
+    fn view_counts_partition_correctly() {
+        let conn = setup_db();
+        // 2 plain photos, 1 favorite photo, 1 video, 1 archived photo.
+        insert_dated(&conn, "/p/a.jpg", "a.jpg", 1000);
+        insert_dated(&conn, "/p/b.jpg", "b.jpg", 1001);
+        insert_dated(&conn, "/p/fav.jpg", "fav.jpg", 1002);
+        set_photo_favorite(&conn, "/p/fav.jpg", true).unwrap();
+        insert_dated(&conn, "/p/clip.mp4", "clip.mp4", 1003);
+        insert_dated(&conn, "/p/old.jpg", "old.jpg", 999);
+        archive_photo(&conn, "/p/old.jpg").unwrap();
+        // Mark one as reviewed so unreviewed != all.
+        mark_photo_reviewed(&conn, "/p/a.jpg").unwrap();
+
+        let counts = get_view_counts(&conn).unwrap();
+        // a, b, fav, clip — old is archived so excluded.
+        assert_eq!(counts["all"], 4);
+        assert_eq!(counts["favorites"], 1);
+        assert_eq!(counts["archived"], 1);
+        // a was marked reviewed; b, fav, clip remain unreviewed.
+        assert_eq!(counts["unreviewed"], 3);
+        assert_eq!(counts["videos_only"], 1);
+        assert_eq!(counts["photos_only"], 3);
     }
 }
