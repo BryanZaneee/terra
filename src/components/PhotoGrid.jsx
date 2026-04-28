@@ -23,6 +23,7 @@ const PhotoGrid = ({
   onPhotoClick,
   onToggleSelection,
   uploadStatus,
+  onEndReached,
 }) => {
   const cols = useResponsiveColumns();
 
@@ -75,6 +76,7 @@ const PhotoGrid = ({
       <GroupedVirtuoso
         useWindowScroll
         groupCounts={groupCounts}
+        endReached={onEndReached}
         groupContent={(index) => {
           const [groupKey, items] = groupedPhotos[index] || [];
           const expanded = !!expandedGroups[groupKey];

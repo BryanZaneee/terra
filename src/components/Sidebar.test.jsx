@@ -28,6 +28,7 @@ const defaultProps = {
   onOpenArchive: vi.fn(),
   onOpenTerraForm: vi.fn(),
   onOpenStorageAnalytics: vi.fn(),
+  onOpenImport: vi.fn(),
 };
 
 describe('Sidebar', () => {
@@ -101,5 +102,17 @@ describe('Sidebar', () => {
   it('shows error message', () => {
     render(<Sidebar {...defaultProps} error="Upload failed" />);
     expect(screen.getByText('Upload failed')).toBeInTheDocument();
+  });
+
+  it('opens provider import from cloud buttons', async () => {
+    const onOpenImport = vi.fn();
+    render(<Sidebar {...defaultProps} onOpenImport={onOpenImport} />);
+    const user = userEvent.setup();
+
+    await user.click(screen.getByText('Google Photos'));
+    expect(onOpenImport).toHaveBeenCalledWith('google_photos');
+
+    await user.click(screen.getByText('Snapchat'));
+    expect(onOpenImport).toHaveBeenCalledWith('snapchat');
   });
 });

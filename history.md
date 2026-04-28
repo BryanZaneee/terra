@@ -44,6 +44,30 @@ Photos full-library API access is no longer the right general solution. Local
 exports keep the app private, durable, and provider-policy friendly while still
 giving the user one Terra button to continue from after downloading an export.
 
+### 2026-04-28 — Import wizard UI
+
+**What:** Added `ImportWizard.jsx` and wired the sidebar Cloud Import buttons
+for Apple Photos/iCloud, Google Photos, Snapchat, and a generic local export.
+The wizard explains the provider-specific reality, links to official export
+pages, lets the user choose a folder or ZIP, calls `import_provider_export`,
+shows progress, and reports imported/duplicate/unsupported/failed counts.
+
+**Why not fake direct sign-in:** the UI deliberately does not ask for cloud
+passwords or scrape provider websites. It surfaces direct instructions and then
+hands off to Terra's local importer, which matches the project's local-first
+privacy model and avoids provider-policy breakage.
+
+### 2026-04-28 — Pagination frontend checkpoint
+
+**What:** Checkpointed the pending P.2 pagination frontend surface that was in
+the workspace: `CONFIG.USE_PAGINATION`, `usePagedPhotos`, `PhotoGrid`
+`endReached`, and the App/usePhotos wiring that keeps the paginated path off by
+default. Added an unmount guard to `usePagedPhotos` while committing it.
+
+**Why keep it behind a flag:** the All Photos paginated path can be dogfooded
+without replacing filtered/gallery-specific flows yet. The legacy
+`get_all_photos` path remains the default until P.3-P.6 complete.
+
 ---
 
 ## Active Effort: Polish to iOS / Google Photos Parity (started 2026-04-27)

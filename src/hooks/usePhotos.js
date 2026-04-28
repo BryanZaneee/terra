@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { processPhotos } from '../utils/photoHelpers';
 import { CONFIG } from '../config';
+import { usePagedPhotos } from './usePagedPhotos';
 
 export function usePhotos() {
   const [photos, setPhotos] = useState([]);
@@ -13,6 +14,12 @@ export function usePhotos() {
 
   const statusTimeoutRef = useRef(null);
   const isMountedRef = useRef(true);
+
+  // Pagination owns the cursor + per-page loading flag; setPhotos/setLoading
+  // here remain the single source of truth for the photos list. When
+  // CONFIG.USE_PAGINATION is off, the paged hook is dormant — its callbacks
+  // are never invoked.
+  const paged = usePagedPhotos({ setPhotos, setLoading, setError });
 
   const setStatusWithTimeout = useCallback((message, duration = CONFIG.STATUS_TIMEOUT_MS) => {
     if (statusTimeoutRef.current) {
@@ -38,6 +45,13 @@ export function usePhotos() {
 
   const loadPhotosFromDatabase = useCallback(async () => {
     if (!isMountedRef.current) return;
+    if (CONFIG.USE_PAGINATION) {
+      // P.2: paginated path is wired only for the All view. Filtered views
+      // (album, tags, search) still bypass this and call setPhotos directly
+      // until P.3–P.4 extend the filter enum.
+      await paged.loadFirstPage({ kind: 'all' });
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
@@ -49,7 +63,7 @@ export function usePhotos() {
     } finally {
       if (isMountedRef.current) setLoading(false);
     }
-  }, []);
+  }, [paged.loadFirstPage]);
 
   const handleUploadPhotos = useCallback(async () => {
     try {
@@ -129,5 +143,11 @@ export function usePhotos() {
     handleUploadPhotos,
     handleToggleFavorite,
     handleDeleteSelected,
+    // Pagination surface — meaningful only when CONFIG.USE_PAGINATION is on
+    // and the active view is one the paged hook knows how to filter (All,
+    // for now). PhotoGrid wires `loadNextPage` to `endReached`.
+    loadNextPage: paged.loadNextPage,
+    hasMore: paged.hasMore,
+    loadingPage: paged.loadingPage,
   };
 }

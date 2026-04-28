@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import {
   Grid, Calendar, Heart, Plus, Upload, Folder, Copy,
   MonitorSmartphone, Archive, Eye, BarChart3, Settings,
-  Image as ImageIcon, Cloud, HardDrive, Sun, Moon
+  Image as ImageIcon, Cloud, HardDrive, Sun, Moon, Camera
 } from 'lucide-react';
 import SmartCollections from './SmartCollections';
 import CloudProviderButton from './CloudProviderButton';
@@ -34,6 +34,7 @@ const Sidebar = ({
   onOpenArchive,
   onOpenTerraForm,
   onOpenStorageAnalytics,
+  onOpenImport,
 }) => {
   const { isLight, toggleTheme } = useTheme();
   return (
@@ -228,9 +229,10 @@ const Sidebar = ({
 
         <div className="mt-8 text-xs font-mono text-white/30 uppercase tracking-widest mb-2 px-2">Cloud Import</div>
         <div className="space-y-1">
-          <CloudProviderButton icon={Cloud} name="iCloud Photos" />
-          <CloudProviderButton icon={ImageIcon} name="Google Photos" />
-          <CloudProviderButton icon={HardDrive} name="Dropbox / Drive" />
+          <CloudProviderButton icon={Cloud} name="iCloud Photos" onClick={() => onOpenImport?.('icloud_photos')} />
+          <CloudProviderButton icon={ImageIcon} name="Google Photos" onClick={() => onOpenImport?.('google_photos')} />
+          <CloudProviderButton icon={Camera} name="Snapchat" onClick={() => onOpenImport?.('snapchat')} />
+          <CloudProviderButton icon={HardDrive} name="Local Export" onClick={() => onOpenImport?.('local_export')} />
         </div>
       </nav>
     </div>

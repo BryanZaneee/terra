@@ -26,6 +26,7 @@ const TagAssignPopover = lazy(() =>
 );
 const StorageAnalytics = lazy(() => import('./components/StorageAnalytics'));
 const TerraFormReview = lazy(() => import('./components/TerraFormReview'));
+const ImportWizard = lazy(() => import('./components/ImportWizard'));
 
 import { AppProvider, useAppContext } from './contexts/AppContext';
 import { ViewProvider, useViewContext } from './contexts/ViewContext';
@@ -41,7 +42,7 @@ const AppLayout = () => {
     tags, selectedTagIds, setSelectedTagIds, loadTags,
     setStatusWithTimeout, loadPhotosFromDatabase,
     handleUploadPhotos, handleToggleFavorite, handleDeleteSelected,
-    loadAlbums,
+    loadAlbums, loadNextPage,
     // cleanup
     showDuplicateScan, showScreenshotScan,
     showDuplicateReview, setShowDuplicateReview,
@@ -77,6 +78,8 @@ const AppLayout = () => {
   const [showTagAssign, setShowTagAssign] = useState(false);
   const [showStorageAnalytics, setShowStorageAnalytics] = useState(false);
   const [showTerraForm, setShowTerraForm] = useState(false);
+  const [showImportWizard, setShowImportWizard] = useState(false);
+  const [importProviderId, setImportProviderId] = useState('google_photos');
 
   const searchInputRef = useRef(null);
 
@@ -133,6 +136,20 @@ const AppLayout = () => {
     handleDeleteSelected(selectedPhotos, clearSelection, loadAlbums, loadLocations);
   };
 
+  const openImportWizard = useCallback((providerId = 'google_photos') => {
+    setImportProviderId(providerId);
+    setShowImportWizard(true);
+  }, []);
+
+  const onImportComplete = useCallback(async (summary) => {
+    await loadPhotosFromDatabase();
+    loadAlbums();
+    loadLocations();
+    setStatusWithTimeout(
+      `Imported ${summary.imported} item${summary.imported === 1 ? '' : 's'} from ${summary.provider_label}`
+    );
+  }, [loadPhotosFromDatabase, loadAlbums, loadLocations, setStatusWithTimeout]);
+
   return (
     <div className="min-h-screen text-gray-100 font-sans selection:bg-white/20 selection:text-white">
       <DitherBackground />
@@ -163,6 +180,7 @@ const AppLayout = () => {
         onOpenArchive={handleOpenArchive}
         onOpenTerraForm={() => setShowTerraForm(true)}
         onOpenStorageAnalytics={() => setShowStorageAnalytics(true)}
+        onOpenImport={openImportWizard}
       />
 
       <div className="pl-72 pr-4 py-4 min-h-screen">
@@ -177,6 +195,12 @@ const AppLayout = () => {
           onPhotoClick={onPhotoClick}
           onToggleSelection={onToggleSelection}
           uploadStatus={uploadStatus}
+          // Only enable infinite scroll on the All view; filtered views still
+          // load their full result set in one shot until P.3–P.4 lift them
+          // onto the paginated path.
+          onEndReached={
+            CONFIG.USE_PAGINATION && viewMode === 'all' ? loadNextPage : undefined
+          }
         />
       </div>
 
@@ -330,6 +354,15 @@ const AppLayout = () => {
               setShowStorageAnalytics(false);
               handleScanForDuplicates();
             }}
+          />
+        )}
+
+        {showImportWizard && (
+          <ImportWizard
+            isOpen={showImportWizard}
+            initialProviderId={importProviderId}
+            onClose={() => setShowImportWizard(false)}
+            onImportComplete={onImportComplete}
           />
         )}
       </Suspense>
