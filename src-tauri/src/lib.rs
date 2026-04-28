@@ -14,6 +14,7 @@ use log::{debug, error, info, warn};
 mod db;
 mod media;
 mod metadata_enrich;
+mod thumbnails;
 
 use media::{compute_dhash, detect_screenshot, hamming_distance, process_image, GEOCODER_LOCATIONS};
 use metadata_enrich::enrich_path;
@@ -86,6 +87,11 @@ pub struct PhotoMetadata {
     pub duration_ms: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub codec: Option<String>,
+    /// 'ready' = on-disk thumb at the canonical content-addressed path;
+    /// 'failed' = decoder rejected (e.g. unsupported HEIC); 'unsupported' = video.
+    /// None means we haven't tried yet.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thumb_status: Option<String>,
 }
 
 /// COMMAND: Get all photos from the database
@@ -1079,6 +1085,69 @@ fn reveal_in_finder(path: String) -> Result<(), String> {
     Ok(())
 }
 
+/// COMMAND: Return the canonical thumbnail cache root as an absolute path.
+/// The frontend uses this to derive content-addressed thumb URLs without
+/// a per-photo IPC round trip.
+#[tauri::command]
+fn get_thumb_cache_root() -> Result<String, String> {
+    Ok(thumbnails::thumb_cache_root().to_string_lossy().into_owned())
+}
+
+/// COMMAND: Backfill thumbnails for every photo lacking one.
+/// Emits `thumbnail_progress` events every 20 items.
+/// Returns the count of thumbnails successfully generated.
+#[tauri::command]
+async fn generate_missing_thumbnails(app: tauri::AppHandle) -> Result<usize, String> {
+    use rayon::prelude::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use tauri::Emitter;
+
+    let conn = db_conn()?;
+    let photos = db::get_photos_without_thumbnails(&conn)
+        .map_err(|e| format!("Failed to query photos: {}", e))?;
+    drop(conn);
+
+    let total = photos.len();
+    if total == 0 {
+        return Ok(0);
+    }
+
+    let count = Arc::new(AtomicUsize::new(0));
+
+    // Decode + resize in parallel; each thread is CPU-bound on JPEG.
+    let results: Vec<(String, &'static str)> = photos
+        .par_iter()
+        .map(|(path, hash)| {
+            let src = Path::new(path);
+            if media::is_video(src) {
+                return (path.clone(), "unsupported");
+            }
+            match thumbnails::generate_thumbnail(src, hash, thumbnails::THUMB_SIZE) {
+                Ok(_) => (path.clone(), "ready"),
+                Err(_) => (path.clone(), "failed"),
+            }
+        })
+        .collect();
+
+    // Persist results sequentially; SQLite handles serialized writes best.
+    let write_conn = db_conn()?;
+    for (i, (path, status)) in results.into_iter().enumerate() {
+        let _ = db::set_thumb_status(&write_conn, &path, status);
+        if status == "ready" {
+            count.fetch_add(1, Ordering::Relaxed);
+        }
+        if (i + 1) % 20 == 0 || i + 1 == total {
+            let _ = app.emit(
+                "thumbnail_progress",
+                serde_json::json!({ "processed": i + 1, "total": total }),
+            );
+        }
+    }
+
+    Ok(count.load(Ordering::Relaxed))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Initialize logging. Set RUST_LOG=debug for verbose output.
@@ -1142,6 +1211,9 @@ pub fn run() {
             // Metadata Enrichment
             enrich_photo_metadata,
             enrich_all_metadata,
+            // Thumbnails
+            get_thumb_cache_root,
+            generate_missing_thumbnails,
             // Finder integration
             reveal_in_finder
         ])

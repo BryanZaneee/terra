@@ -328,6 +328,7 @@ pub(crate) fn process_image(path: &Path, geocoder: Option<&ReverseGeocoder>) -> 
         orientation: None,
         duration_ms: None,
         codec: None,
+        thumb_status: None,
     })
 }
 

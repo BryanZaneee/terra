@@ -81,6 +81,10 @@ pub fn init_schema(conn: &Connection) -> SqlResult<()> {
     let _ = conn.execute("ALTER TABLE photos ADD COLUMN duration_ms INTEGER", []);
     let _ = conn.execute("ALTER TABLE photos ADD COLUMN codec TEXT", []);
 
+    // Thumbnail generation tracking. NULL = pending, 'ready' = on-disk thumb exists,
+    // 'failed' = decoder rejected (e.g. unsupported HEIC), 'unsupported' = video.
+    let _ = conn.execute("ALTER TABLE photos ADD COLUMN thumb_status TEXT", []);
+
     // Create albums table
     conn.execute(
         "CREATE TABLE IF NOT EXISTS albums (
@@ -257,7 +261,7 @@ const PHOTO_COLUMNS: &str =
     "path, name, date_taken, width, height, is_favorite, content_hash, \
      latitude, longitude, location_name, \
      camera_make, camera_model, lens_model, iso, aperture, shutter_us, \
-     focal_length_mm, orientation, duration_ms, codec";
+     focal_length_mm, orientation, duration_ms, codec, thumb_status";
 
 /// Map a row produced by PHOTO_COLUMNS into a PhotoMetadata.
 fn photo_from_row(row: &rusqlite::Row) -> rusqlite::Result<PhotoMetadata> {
@@ -282,6 +286,7 @@ fn photo_from_row(row: &rusqlite::Row) -> rusqlite::Result<PhotoMetadata> {
         orientation: row.get(17)?,
         duration_ms: row.get(18)?,
         codec: row.get(19)?,
+        thumb_status: row.get(20)?,
     })
 }
 
@@ -392,7 +397,7 @@ pub fn get_album_photos(conn: &Connection, album_id: i64) -> SqlResult<Vec<Photo
         "SELECT p.path, p.name, p.date_taken, p.width, p.height, p.is_favorite, p.content_hash, \
          p.latitude, p.longitude, p.location_name, \
          p.camera_make, p.camera_model, p.lens_model, p.iso, p.aperture, p.shutter_us, \
-         p.focal_length_mm, p.orientation, p.duration_ms, p.codec \
+         p.focal_length_mm, p.orientation, p.duration_ms, p.codec, p.thumb_status \
          FROM photos p \
          JOIN album_photos ap ON p.path = ap.photo_path \
          WHERE ap.album_id = ?1 \
@@ -543,8 +548,8 @@ pub fn get_archived_photos(conn: &Connection) -> SqlResult<Vec<(PhotoMetadata, i
         PHOTO_COLUMNS
     );
     let mut stmt = conn.prepare(&query)?;
-    // archived_at is at index 20 (after the 20 PHOTO_COLUMNS fields)
-    let rows = stmt.query_map([], |row| Ok((photo_from_row(row)?, row.get::<_, i64>(20)?)))?;
+    // archived_at is at index 21 (after the 21 PHOTO_COLUMNS fields)
+    let rows = stmt.query_map([], |row| Ok((photo_from_row(row)?, row.get::<_, i64>(21)?)))?;
     rows.collect()
 }
 
@@ -727,7 +732,7 @@ pub fn get_photos_by_tags(conn: &Connection, tag_ids: &[i64], match_all: bool) -
     let photo_cols = "p.path, p.name, p.date_taken, p.width, p.height, p.is_favorite, p.content_hash, \
                       p.latitude, p.longitude, p.location_name, \
                       p.camera_make, p.camera_model, p.lens_model, p.iso, p.aperture, p.shutter_us, \
-                      p.focal_length_mm, p.orientation, p.duration_ms, p.codec";
+                      p.focal_length_mm, p.orientation, p.duration_ms, p.codec, p.thumb_status";
     let query = if match_all {
         // AND logic: photo must have ALL specified tags
         format!(
@@ -1210,6 +1215,26 @@ pub fn get_photos_without_enrichment(conn: &Connection) -> SqlResult<Vec<String>
     rows.collect()
 }
 
+/// Get (path, content_hash) for every photo whose thumbnail is missing.
+/// Skips archived photos and photos without a content hash (rare; can't be addressed).
+pub fn get_photos_without_thumbnails(conn: &Connection) -> SqlResult<Vec<(String, String)>> {
+    let mut stmt = conn.prepare(
+        "SELECT path, content_hash FROM photos \
+         WHERE thumb_status IS NULL AND content_hash IS NOT NULL AND archived_at IS NULL"
+    )?;
+    let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+    rows.collect()
+}
+
+/// Set the thumb_status for one photo. Caller passes 'ready', 'failed', or 'unsupported'.
+pub fn set_thumb_status(conn: &Connection, path: &str, status: &str) -> SqlResult<()> {
+    conn.execute(
+        "UPDATE photos SET thumb_status = ?1 WHERE path = ?2",
+        params![status, path],
+    )?;
+    Ok(())
+}
+
 /// Update file size for a photo
 pub fn update_photo_file_size(conn: &Connection, path: &str, size: i64) -> SqlResult<()> {
     conn.execute(
@@ -1255,6 +1280,7 @@ mod tests {
             orientation: None,
             duration_ms: None,
             codec: None,
+            thumb_status: None,
         }
     }
 

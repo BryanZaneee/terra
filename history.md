@@ -23,7 +23,9 @@ face detection, or RAW workflows — those trade-offs are documented in
 |------|-------|--------|
 | A | Photo modal polish, keyboard, skeletons, errors, tooltips | done |
 | E (camera/lens/video) | Python + exiftool metadata enrichment | done |
-| B | Thumbnails + virtualization | next |
+| B.1 | Rust thumbnail pipeline + DB column + commands | done |
+| B.2 | Frontend thumbnail consumption + Settings backfill UI | next |
+| B.3 | Virtualized gallery (react-virtuoso) | pending |
 | C | Discovery (FTS, filters, memories, map) | pending |
 | D | Imports (Takeout, Apple, Snapchat) | pending |
 | E (rest) | Date editing, video thumbnails, HEIC | pending |
@@ -72,6 +74,81 @@ Detailed entries appear below as each item lands.
   cached manually. react-virtuoso has built-in `<GroupedVirtuoso>` that
   matches our existing PhotoGrid shape exactly. Bundle weight is
   comparable (~30KB gzip).
+
+---
+
+### 2026-04-27 — Phase B.1: Rust thumbnail pipeline + DB
+
+**What:** new `src-tauri/src/thumbnails.rs` module with content-addressed
+JPEG thumbnail cache. New `thumb_status` column on `photos`. Two new
+Tauri commands: `get_thumb_cache_root` (one-time path lookup) and
+`generate_missing_thumbnails` (parallel backfill, emits
+`thumbnail_progress` events every 20 items).
+
+**Why content-addressed (`<root>/<size>/<hash[0..2]>/<hash>.jpg`):**
+
+1. The cache survives library re-organizations — a moved photo with the
+   same content keeps its thumb.
+2. Two-character hash prefix gives 256-way fan-out so no single dir
+   exceeds ~5–10K files at 100K-photo scale (apfs and most filesystems
+   degrade above that).
+3. No DB lookup needed to find a thumb path — frontend computes it from
+   `content_hash + thumb_cache_root`. Saves an IPC round-trip per
+   photo.
+
+**Why `thumb_status TEXT` column over computing presence at request
+time:** cheaper than a `stat` call per photo on every gallery render.
+Trade-off is a flag we have to keep in sync; the only place that
+writes it is the thumbnail backfill command, which is bounded.
+
+**Why JPEG quality 80 + 256² single size for v1:** 256² is the grid-card
+target (2-col mobile up to 5-col XL — even at 200% retina, ~150px
+displayed). JPEG 80 was the sweet spot for size vs visual quality in
+informal tests. The 1024² preview tier (for faster modal opens) is
+deferred until we see whether modal-open latency on originals is
+actually a user-felt problem.
+
+**Why we explicitly reject videos with `thumb_status = 'unsupported'`:**
+the `image` crate doesn't decode video. ffmpeg / extracting a frame is
+Phase E.2 work (and it'll write thumbs through this same pipeline when
+it lands). Tagging them prevents the backfill loop from re-trying every
+run.
+
+**Why parallel via Rayon, results then written serially:** image
+decode/resize is CPU-bound; SQLite writes serialize on a single writer
+anyway. Doing the writes after `par_iter` collects keeps the rusqlite
+connection out of the parallel section (Connection isn't Sync). Writing
+inside `par_iter` would need per-thread connections, which is overkill
+for the volume of writes (≤O(library size), ~100K rows).
+
+**Why we didn't add asset-protocol scope changes:** the cache lives
+under `dirs::data_local_dir()` which on macOS is
+`~/Library/Application Support/`. That's already covered by `$DATA/**`
+in the existing scope.
+
+**Files added/changed.**
+- New: `src-tauri/src/thumbnails.rs` (~75 LOC + 4 unit tests).
+- Changed: `src-tauri/src/db.rs` (one ALTER, PHOTO_COLUMNS extended,
+  `photo_from_row` reads index 20, `get_archived_photos` archived_at
+  index 20→21, `get_album_photos` and tag-search column lists extended
+  with `p.thumb_status`, two new helpers `get_photos_without_thumbnails`
+  and `set_thumb_status`, `test_photo` fixture extended);
+  `src-tauri/src/lib.rs` (`PhotoMetadata.thumb_status`, `mod thumbnails`,
+  two new commands, registration); `src-tauri/src/media.rs`
+  (`thumb_status: None` on the import struct literal).
+
+**Verification.** `cargo test`: 56/56. `cargo check`: clean (4
+pre-existing dead_code warnings unchanged). `npm run test:run`: 147/147
+(no frontend changes yet).
+
+**Deferred to B.2.** Frontend wire-up: AppContext fetches
+`thumb_cache_root` once on mount; `processPhotos` (or a new
+`getThumbnailUrl` helper) derives the URL; `PhotoCard` falls back to
+the original when `thumb_status !== 'ready'`. Settings UI button to
+trigger `generate_missing_thumbnails` with progress bar.
+
+**Deferred to B.3.** Virtualized rendering of the gallery (currently
+still creates a DOM node per photo).
 
 ---
 
