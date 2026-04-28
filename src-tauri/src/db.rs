@@ -1290,37 +1290,160 @@ pub fn get_photos_without_file_size(conn: &Connection) -> SqlResult<Vec<String>>
 // Pagination (PAGINATION_PLAN.md)
 // ============================================================================
 
-/// SQL fragment that's true for video files. Used by both view counts and
-/// page filters once `PhotosOnly`/`VideosOnly` land in P.3.
-const IS_VIDEO_SQL: &str = "(LOWER(name) LIKE '%.mp4' OR \
+/// SQL fragment that's true for video files (alias `p` for the `photos`
+/// table). Used by both view counts and page filters.
+const IS_VIDEO_SQL: &str = "(LOWER(p.name) LIKE '%.mp4' OR \
+     LOWER(p.name) LIKE '%.mov' OR \
+     LOWER(p.name) LIKE '%.avi' OR \
+     LOWER(p.name) LIKE '%.webm' OR \
+     LOWER(p.name) LIKE '%.mkv')";
+
+/// Same fragment but using the bare `photos` table (no alias). Kept around
+/// for callers that don't alias, e.g. `get_view_counts`.
+const IS_VIDEO_SQL_UNALIASED: &str = "(LOWER(name) LIKE '%.mp4' OR \
      LOWER(name) LIKE '%.mov' OR \
      LOWER(name) LIKE '%.avi' OR \
      LOWER(name) LIKE '%.webm' OR \
      LOWER(name) LIKE '%.mkv')";
 
-/// Translate a `ViewFilter` into a SQL WHERE clause fragment.
-///
-/// All non-archive filters exclude `archived_at IS NOT NULL` rows so the
-/// archive sits in its own bucket; otherwise archived photos would leak into
-/// every other view. P.4 will grow this match arm with Tag/Album/Location/
-/// SmartCollection/Search variants.
-fn filter_where_clause(filter: &ViewFilter) -> String {
+/// All paginated queries SELECT these columns from `photos` aliased as `p`,
+/// in the exact order `photo_from_row` expects, followed by `p.id` as the
+/// trailing column for cursor extraction.
+const PAGINATED_SELECT: &str =
+    "p.path, p.name, p.date_taken, p.width, p.height, p.is_favorite, p.content_hash, \
+     p.latitude, p.longitude, p.location_name, \
+     p.camera_make, p.camera_model, p.lens_model, p.iso, p.aperture, p.shutter_us, \
+     p.focal_length_mm, p.orientation, p.duration_ms, p.codec, p.thumb_status, p.id";
+
+/// Per-filter SQL contribution: optional JOIN clause(s), a WHERE fragment
+/// (referencing `p.` and any joined-table aliases), and the bound params for
+/// any `?` placeholders the WHERE introduces.
+struct FilterSql {
+    /// Empty string for filters that only need the photos table; otherwise a
+    /// space-prefixed JOIN clause (e.g. " JOIN photo_tags pt ON p.path = pt.photo_path").
+    joins: String,
+    /// WHERE fragment. Must reference columns via `p.` or joined-table aliases.
+    clause: String,
+    /// Parameters bound in left-to-right `?` order within `joins + clause`.
+    params: Vec<Box<dyn rusqlite::ToSql>>,
+}
+
+/// Translate a `ViewFilter` into the SQL contribution for `get_photos_page`.
+fn build_filter_sql(filter: &ViewFilter) -> FilterSql {
     match filter {
-        ViewFilter::All => "archived_at IS NULL".to_string(),
-        ViewFilter::Favorites => "archived_at IS NULL AND is_favorite = 1".to_string(),
-        ViewFilter::Archived => "archived_at IS NOT NULL".to_string(),
-        ViewFilter::Unreviewed => "archived_at IS NULL AND reviewed_at IS NULL".to_string(),
-        ViewFilter::PhotosOnly => format!("archived_at IS NULL AND NOT {}", IS_VIDEO_SQL),
-        ViewFilter::VideosOnly => format!("archived_at IS NULL AND {}", IS_VIDEO_SQL),
+        ViewFilter::All => FilterSql {
+            joins: String::new(),
+            clause: "p.archived_at IS NULL".to_string(),
+            params: Vec::new(),
+        },
+        ViewFilter::Favorites => FilterSql {
+            joins: String::new(),
+            clause: "p.archived_at IS NULL AND p.is_favorite = 1".to_string(),
+            params: Vec::new(),
+        },
+        ViewFilter::Archived => FilterSql {
+            joins: String::new(),
+            clause: "p.archived_at IS NOT NULL".to_string(),
+            params: Vec::new(),
+        },
+        ViewFilter::Unreviewed => FilterSql {
+            joins: String::new(),
+            clause: "p.archived_at IS NULL AND p.reviewed_at IS NULL".to_string(),
+            params: Vec::new(),
+        },
+        ViewFilter::PhotosOnly => FilterSql {
+            joins: String::new(),
+            clause: format!("p.archived_at IS NULL AND NOT {}", IS_VIDEO_SQL),
+            params: Vec::new(),
+        },
+        ViewFilter::VideosOnly => FilterSql {
+            joins: String::new(),
+            clause: format!("p.archived_at IS NULL AND {}", IS_VIDEO_SQL),
+            params: Vec::new(),
+        },
+        ViewFilter::Tag { id } => FilterSql {
+            joins: " JOIN photo_tags pt ON p.path = pt.photo_path".to_string(),
+            clause: "p.archived_at IS NULL AND pt.tag_id = ?".to_string(),
+            params: vec![Box::new(*id)],
+        },
+        ViewFilter::Album { id } => FilterSql {
+            joins: " JOIN album_photos ap ON p.path = ap.photo_path".to_string(),
+            clause: "p.archived_at IS NULL AND ap.album_id = ?".to_string(),
+            params: vec![Box::new(*id)],
+        },
+        ViewFilter::Location { name } => FilterSql {
+            joins: String::new(),
+            clause: "p.archived_at IS NULL AND p.location_name = ?".to_string(),
+            params: vec![Box::new(name.clone())],
+        },
+        ViewFilter::Search { query } => {
+            let term = format!("%{}%", query);
+            FilterSql {
+                joins: String::new(),
+                clause: "p.archived_at IS NULL AND (p.name LIKE ? OR p.location_name LIKE ?)".to_string(),
+                params: vec![Box::new(term.clone()), Box::new(term)],
+            }
+        }
+        ViewFilter::SmartCollection { id } => smart_collection_filter_sql(id),
+    }
+}
+
+/// Map a smart-collection id to a `FilterSql`. The legacy
+/// `get_smart_collection_photos` orders size buckets by `file_size DESC`, but
+/// the cursor schema requires `(date_taken, id)`, so the paginated path
+/// uniformly orders by `date_taken DESC` — UX tradeoff: large/medium/small
+/// buckets are still scoped by size, but rows inside each bucket appear
+/// chronologically rather than biggest-first. Acceptable until the cursor
+/// design is extended to per-filter sort dimensions.
+fn smart_collection_filter_sql(id: &str) -> FilterSql {
+    let now = chrono::Utc::now().timestamp();
+    let seven_days_ago = now - 7 * 24 * 60 * 60;
+    let thirty_days_ago = now - 30 * 24 * 60 * 60;
+    let current_year = chrono::Utc::now().format("%Y").to_string();
+
+    let none = || (String::new(), Vec::<Box<dyn rusqlite::ToSql>>::new());
+
+    let (clause, params): (String, Vec<Box<dyn rusqlite::ToSql>>) = match id {
+        "size_large" => ("p.file_size > 5242880".to_string(), none().1),
+        "size_medium" => ("p.file_size BETWEEN 1048576 AND 5242880".to_string(), none().1),
+        "size_small" => ("p.file_size < 1048576 AND p.file_size > 0".to_string(), none().1),
+        "dim_4k" => ("(p.width >= 3840 OR p.height >= 2160)".to_string(), none().1),
+        "dim_hd" => (
+            "(p.width >= 1920 OR p.height >= 1080) AND p.width < 3840 AND p.height < 2160".to_string(),
+            none().1,
+        ),
+        "dim_portrait" => ("p.height > p.width AND p.width > 0".to_string(), none().1),
+        "dim_landscape" => ("p.width > p.height AND p.height > 0".to_string(), none().1),
+        "status_unreviewed" => ("p.reviewed_at IS NULL".to_string(), none().1),
+        "time_7days" => (
+            "p.date_taken > ?".to_string(),
+            vec![Box::new(seven_days_ago) as Box<dyn rusqlite::ToSql>],
+        ),
+        "time_30days" => (
+            "p.date_taken > ?".to_string(),
+            vec![Box::new(thirty_days_ago) as Box<dyn rusqlite::ToSql>],
+        ),
+        "time_year" => (
+            "strftime('%Y', p.date_taken, 'unixepoch') = ?".to_string(),
+            vec![Box::new(current_year) as Box<dyn rusqlite::ToSql>],
+        ),
+        // Unknown collection id → match nothing rather than match everything.
+        _ => ("1 = 0".to_string(), none().1),
+    };
+
+    FilterSql {
+        joins: String::new(),
+        clause: format!("p.archived_at IS NULL AND {}", clause),
+        params,
     }
 }
 
 /// Cursor-paginated photo query.
 ///
-/// Returns up to `limit` rows in DESC order on `(date_taken, id)`. Internally
-/// fetches `limit + 1` to detect whether more pages exist without a separate
-/// COUNT round-trip; the extra row is dropped from the response and the last
-/// kept row's position becomes `next_cursor`.
+/// Returns up to `limit` rows in DESC order on `(p.date_taken, p.id)`.
+/// Internally fetches `limit + 1` to detect whether more pages exist without
+/// a separate COUNT round-trip; the extra row is dropped from the response
+/// and the last kept row's position becomes `next_cursor`.
 ///
 /// Cursors are exclusive: the next page query is strictly less than this
 /// position, which keeps the walk stable across deletes between calls.
@@ -1334,43 +1457,32 @@ pub fn get_photos_page(
         return Ok(PageResult { photos: Vec::new(), next_cursor: None });
     }
 
-    let where_clause = filter_where_clause(filter);
+    let f = build_filter_sql(filter);
     let limit_plus_one = limit + 1;
 
-    // Two query shapes — with or without cursor — keep parameter binding
-    // straightforward without dynamic Vec<Box<dyn ToSql>>.
-    let (sql, rows): (String, Vec<(PhotoMetadata, i64)>) = match cursor {
-        Some(c) => {
-            let sql = format!(
-                "SELECT {}, id FROM photos WHERE {} \
-                 AND (date_taken < ?1 OR (date_taken = ?1 AND id < ?2)) \
-                 ORDER BY date_taken DESC, id DESC LIMIT ?3",
-                PHOTO_COLUMNS, where_clause
-            );
-            let mut stmt = conn.prepare(&sql)?;
-            let rows = stmt
-                .query_map(params![c.date_taken, c.id, limit_plus_one], |row| {
-                    Ok((photo_from_row(row)?, row.get::<_, i64>(21)?))
-                })?
-                .collect::<SqlResult<Vec<_>>>()?;
-            (sql, rows)
-        }
-        None => {
-            let sql = format!(
-                "SELECT {}, id FROM photos WHERE {} \
-                 ORDER BY date_taken DESC, id DESC LIMIT ?1",
-                PHOTO_COLUMNS, where_clause
-            );
-            let mut stmt = conn.prepare(&sql)?;
-            let rows = stmt
-                .query_map(params![limit_plus_one], |row| {
-                    Ok((photo_from_row(row)?, row.get::<_, i64>(21)?))
-                })?
-                .collect::<SqlResult<Vec<_>>>()?;
-            (sql, rows)
-        }
-    };
-    let _ = sql; // silence unused-binding warning when no logging
+    let mut sql = format!(
+        "SELECT {} FROM photos p{} WHERE {}",
+        PAGINATED_SELECT, f.joins, f.clause
+    );
+    // Build params in left-to-right `?` order: filter params, optional
+    // cursor params, then limit. This avoids juggling named placeholders.
+    let mut bound: Vec<Box<dyn rusqlite::ToSql>> = f.params;
+    if let Some(c) = cursor {
+        sql.push_str(" AND (p.date_taken < ? OR (p.date_taken = ? AND p.id < ?))");
+        bound.push(Box::new(c.date_taken));
+        bound.push(Box::new(c.date_taken));
+        bound.push(Box::new(c.id));
+    }
+    sql.push_str(" ORDER BY p.date_taken DESC, p.id DESC LIMIT ?");
+    bound.push(Box::new(limit_plus_one));
+
+    let mut stmt = conn.prepare(&sql)?;
+    let rows: Vec<(PhotoMetadata, i64)> = stmt
+        .query_map(
+            rusqlite::params_from_iter(bound.iter().map(|p| p.as_ref())),
+            |row| Ok((photo_from_row(row)?, row.get::<_, i64>(21)?)),
+        )?
+        .collect::<SqlResult<Vec<_>>>()?;
 
     let (photos, next_cursor) = if rows.len() > limit as usize {
         // limit+1 came back — at least one more page exists. Drop the
@@ -1417,14 +1529,14 @@ pub fn get_view_counts(conn: &Connection) -> SqlResult<HashMap<String, i64>> {
         "videos_only".to_string(),
         scalar(&format!(
             "SELECT COUNT(*) FROM photos WHERE archived_at IS NULL AND {}",
-            IS_VIDEO_SQL
+            IS_VIDEO_SQL_UNALIASED
         ))?,
     );
     counts.insert(
         "photos_only".to_string(),
         scalar(&format!(
             "SELECT COUNT(*) FROM photos WHERE archived_at IS NULL AND NOT {}",
-            IS_VIDEO_SQL
+            IS_VIDEO_SQL_UNALIASED
         ))?,
     );
 
@@ -1980,6 +2092,132 @@ mod tests {
         let result = get_photos_page(&conn, &ViewFilter::PhotosOnly, None, 50).unwrap();
         assert_eq!(result.photos.len(), 1);
         assert_eq!(result.photos[0].path, "/p/photo.jpg");
+    }
+
+    #[test]
+    fn paged_tag_filter_returns_only_tagged_photos() {
+        let conn = setup_db();
+        insert_dated(&conn, "/p/a.jpg", "a.jpg", 1000);
+        insert_dated(&conn, "/p/b.jpg", "b.jpg", 1001);
+        insert_dated(&conn, "/p/c.jpg", "c.jpg", 1002);
+
+        let nature = create_tag(&conn, "nature", "#0f0").unwrap();
+        let urban = create_tag(&conn, "urban", "#f00").unwrap();
+        add_tags_to_photos(&conn, &[nature], &["/p/a.jpg".to_string(), "/p/c.jpg".to_string()]).unwrap();
+        add_tags_to_photos(&conn, &[urban], &["/p/b.jpg".to_string()]).unwrap();
+
+        let result = get_photos_page(&conn, &ViewFilter::Tag { id: nature }, None, 50).unwrap();
+        let paths: Vec<&str> = result.photos.iter().map(|p| p.path.as_str()).collect();
+        assert_eq!(paths, vec!["/p/c.jpg", "/p/a.jpg"]);
+    }
+
+    #[test]
+    fn paged_album_filter_returns_only_album_members() {
+        let conn = setup_db();
+        insert_dated(&conn, "/p/a.jpg", "a.jpg", 1000);
+        insert_dated(&conn, "/p/b.jpg", "b.jpg", 1001);
+        insert_dated(&conn, "/p/c.jpg", "c.jpg", 1002);
+
+        let trip = create_album(&conn, "Trip").unwrap();
+        add_photo_to_album(&conn, trip, "/p/a.jpg").unwrap();
+        add_photo_to_album(&conn, trip, "/p/c.jpg").unwrap();
+
+        let result = get_photos_page(&conn, &ViewFilter::Album { id: trip }, None, 50).unwrap();
+        let paths: Vec<&str> = result.photos.iter().map(|p| p.path.as_str()).collect();
+        assert_eq!(paths, vec!["/p/c.jpg", "/p/a.jpg"]);
+    }
+
+    #[test]
+    fn paged_location_filter_matches_location_name_exactly() {
+        let conn = setup_db();
+        let mut a = test_photo("/p/paris.jpg", "paris.jpg");
+        a.date_taken = 1000;
+        a.location_name = Some("Paris, France".to_string());
+        insert_photo(&conn, &a, "upload").unwrap();
+
+        let mut b = test_photo("/p/tokyo.jpg", "tokyo.jpg");
+        b.date_taken = 1001;
+        b.location_name = Some("Tokyo, Japan".to_string());
+        insert_photo(&conn, &b, "upload").unwrap();
+
+        let result = get_photos_page(
+            &conn,
+            &ViewFilter::Location { name: "Paris, France".to_string() },
+            None,
+            50,
+        ).unwrap();
+        assert_eq!(result.photos.len(), 1);
+        assert_eq!(result.photos[0].path, "/p/paris.jpg");
+    }
+
+    #[test]
+    fn paged_search_filter_matches_name_or_location_substring() {
+        let conn = setup_db();
+        let mut sunset = test_photo("/p/sunset_beach.jpg", "sunset_beach.jpg");
+        sunset.date_taken = 1000;
+        insert_photo(&conn, &sunset, "upload").unwrap();
+
+        let mut paris = test_photo("/p/photo.jpg", "photo.jpg");
+        paris.date_taken = 1001;
+        paris.location_name = Some("Paris, France".to_string());
+        insert_photo(&conn, &paris, "upload").unwrap();
+
+        let result_name = get_photos_page(
+            &conn,
+            &ViewFilter::Search { query: "sunset".to_string() },
+            None,
+            50,
+        ).unwrap();
+        assert_eq!(result_name.photos.len(), 1);
+        assert_eq!(result_name.photos[0].path, "/p/sunset_beach.jpg");
+
+        let result_location = get_photos_page(
+            &conn,
+            &ViewFilter::Search { query: "Paris".to_string() },
+            None,
+            50,
+        ).unwrap();
+        assert_eq!(result_location.photos.len(), 1);
+        assert_eq!(result_location.photos[0].path, "/p/photo.jpg");
+    }
+
+    #[test]
+    fn paged_smart_collection_unknown_id_matches_nothing() {
+        let conn = setup_db();
+        insert_dated(&conn, "/p/a.jpg", "a.jpg", 1000);
+
+        let result = get_photos_page(
+            &conn,
+            &ViewFilter::SmartCollection { id: "totally_made_up".to_string() },
+            None,
+            50,
+        ).unwrap();
+        assert!(result.photos.is_empty());
+    }
+
+    #[test]
+    fn paged_smart_collection_size_large_filters_by_threshold() {
+        let conn = setup_db();
+        // 6 MB photo — qualifies as "large".
+        let mut big = test_photo("/p/big.jpg", "big.jpg");
+        big.date_taken = 1000;
+        insert_photo(&conn, &big, "upload").unwrap();
+        update_photo_file_size(&conn, "/p/big.jpg", 6 * 1024 * 1024).unwrap();
+
+        // 100 KB photo — does not qualify.
+        let mut tiny = test_photo("/p/tiny.jpg", "tiny.jpg");
+        tiny.date_taken = 1001;
+        insert_photo(&conn, &tiny, "upload").unwrap();
+        update_photo_file_size(&conn, "/p/tiny.jpg", 100 * 1024).unwrap();
+
+        let result = get_photos_page(
+            &conn,
+            &ViewFilter::SmartCollection { id: "size_large".to_string() },
+            None,
+            50,
+        ).unwrap();
+        assert_eq!(result.photos.len(), 1);
+        assert_eq!(result.photos[0].path, "/p/big.jpg");
     }
 
     #[test]

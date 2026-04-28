@@ -138,7 +138,6 @@ pub struct ProviderImportProgress {
 
 /// Discriminates which slice of the library a page query targets.
 /// SQL builder in db::get_photos_page branches on this.
-/// P.4 will add Tag/Album/Location/SmartCollection/Search variants.
 #[derive(Deserialize, Debug, Clone)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ViewFilter {
@@ -148,6 +147,18 @@ pub enum ViewFilter {
     Unreviewed,
     PhotosOnly,
     VideosOnly,
+    /// Single-tag filter. Multi-tag (with AND/OR semantics) still goes
+    /// through the legacy `get_photos_by_tags` until/unless we extend the
+    /// cursor schema to handle the GROUP BY HAVING shape.
+    Tag { id: i64 },
+    Album { id: i64 },
+    Location { name: String },
+    Search { query: String },
+    /// Smart collection by id (e.g. "size_large", "time_7days"). The
+    /// paginated path overrides the legacy file-size ordering with the
+    /// uniform `date_taken DESC, id DESC` walk so the cursor stays valid;
+    /// users can still see large/old/etc. content via the WHERE clause.
+    SmartCollection { id: String },
 }
 
 /// Cursor onto a row, by `(date_taken, id)`. Carrying both makes the walk

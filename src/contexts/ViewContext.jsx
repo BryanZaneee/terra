@@ -2,7 +2,7 @@ import { createContext, useContext, useState, useMemo, useEffect, useRef } from 
 import { invoke } from '@tauri-apps/api/core';
 import { processPhotos } from '../utils/photoHelpers';
 import { groupPhotosBy } from '../utils/groupPhotos';
-import { filterForViewMode } from '../utils/viewFilter';
+import { filterForViewMode, filterKey } from '../utils/viewFilter';
 import { CONFIG } from '../config';
 import { useAppContext } from './AppContext';
 
@@ -28,10 +28,11 @@ export function ViewProvider({ children }) {
   const wasFilteredViewRef = useRef(false);
   const prevGroupKeysRef = useRef('');
   const isMountedRef = useRef(true);
-  // Tracks the last server-side filter we requested in paginated mode, so
-  // pure-presentation switches (all → year → month → locations) skip the
-  // round-trip while filter changes (all → favorites) trigger a reload.
-  const lastFilterKindRef = useRef('all');
+  // Stable key of the last server-side filter requested in paginated mode.
+  // Pure-presentation switches (all → year → month → locations) all map to
+  // the same key and skip the round-trip; album:5 → album:6 changes the key
+  // and triggers a reload.
+  const lastFilterKeyRef = useRef(filterKey({ kind: 'all' }));
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -65,12 +66,26 @@ export function ViewProvider({ children }) {
     if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
 
     if (!query.trim()) {
-      loadPhotosFromDatabase();
+      // Empty query → bail out of search view and reload the previous slice.
+      // In paginated mode this resets the cursor walk; in legacy mode it
+      // refetches the whole library.
+      if (CONFIG.USE_PAGINATION) {
+        setViewMode('all');
+      } else {
+        loadPhotosFromDatabase();
+      }
       return;
     }
 
     searchDebounceRef.current = setTimeout(async () => {
       if (!isMountedRef.current) return;
+      if (CONFIG.USE_PAGINATION) {
+        const filter = { kind: 'search', query: query.trim() };
+        lastFilterKeyRef.current = filterKey(filter);
+        setViewMode('search');
+        await loadPhotosFromDatabase(filter);
+        return;
+      }
       setLoading(true);
       try {
         const result = await invoke('search_photos', { query });
@@ -100,25 +115,29 @@ export function ViewProvider({ children }) {
   useEffect(() => {
     const load = async () => {
       try {
-        // Paginated path (P.3): for built-in views, derive a server-side
-        // ViewFilter and reload only when the filter kind actually changes.
-        // Pure regrouping (year/month/locations all map to ::All) is a
-        // no-op so users don't pay a round-trip for view-mode switches.
-        if (CONFIG.USE_PAGINATION) {
-          const filter = filterForViewMode(viewMode);
+        // Paginated path: derive a server-side ViewFilter and reload only
+        // when the filter key actually changes. Pure regrouping
+        // (all → year → month → locations all map to the same key) skips
+        // the round-trip; switching album:5 → album:6 changes the key and
+        // triggers a reload. 'search' is driven by handleSearch, not here,
+        // so we ignore that viewMode here to avoid double-fetching on
+        // every keystroke.
+        if (CONFIG.USE_PAGINATION && viewMode !== 'search') {
+          const filter = filterForViewMode(viewMode, { selectedTagIds });
           if (filter) {
             wasFilteredViewRef.current = false;
-            if (filter.kind !== lastFilterKindRef.current) {
-              lastFilterKindRef.current = filter.kind;
+            const key = filterKey(filter);
+            if (key !== lastFilterKeyRef.current) {
+              lastFilterKeyRef.current = key;
               await loadPhotosFromDatabase(filter);
             }
             return;
           }
-          // Filter is null → an album / tag / search / collection / duplicates
-          // view that hasn't been migrated yet. Fall through to the legacy
-          // direct-fetch branches below; on return to a paginated view, the
-          // filter-kind change will trigger a fresh first page.
-          lastFilterKindRef.current = '';
+          // Multi-tag selections, duplicates, or other unmigrated views
+          // still bypass — fall through to the legacy direct-fetch branches.
+          // Reset the key so the next paginated viewMode is treated as a
+          // fresh filter and triggers a reload.
+          lastFilterKeyRef.current = null;
         }
 
         if (viewMode.startsWith('album:')) {

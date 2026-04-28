@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { Copy, MonitorSmartphone } from 'lucide-react';
 
 import { CONFIG } from './config';
-import { isPaginatedViewMode } from './utils/viewFilter';
+import { filterForViewMode } from './utils/viewFilter';
 import ErrorBoundary from './components/ErrorBoundary';
 import DitherBackground from './components/DitherBackground';
 import Sidebar from './components/Sidebar';
@@ -196,11 +196,16 @@ const AppLayout = () => {
           onPhotoClick={onPhotoClick}
           onToggleSelection={onToggleSelection}
           uploadStatus={uploadStatus}
-          // Infinite scroll on every paginated view; album/tag/search/etc.
-          // still fetch in one shot until P.4 lifts them onto the paginated
-          // path. Passing `undefined` keeps Virtuoso silent for those.
+          // Infinite scroll fires only when the current view actually
+          // resolves to a server-side filter — multi-tag selections,
+          // duplicates, and an empty search all return null below and stay
+          // on the legacy single-shot fetch. Passing `undefined` keeps
+          // Virtuoso silent for those.
           onEndReached={
-            CONFIG.USE_PAGINATION && isPaginatedViewMode(viewMode) ? loadNextPage : undefined
+            CONFIG.USE_PAGINATION
+            && filterForViewMode(viewMode, { selectedTagIds, searchQuery }) != null
+              ? loadNextPage
+              : undefined
           }
         />
       </div>
