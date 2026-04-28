@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, lazy, Suspense } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { Copy, MonitorSmartphone } from 'lucide-react';
 
@@ -8,17 +8,24 @@ import DitherBackground from './components/DitherBackground';
 import Sidebar from './components/Sidebar';
 import PhotoGrid from './components/PhotoGrid';
 import SelectionToolbar from './components/SelectionToolbar';
-import PhotoModal from './components/PhotoModal';
-import CreateAlbumModal from './components/CreateAlbumModal';
-import AddToAlbumModal from './components/AddToAlbumModal';
-import ScanModal from './components/ScanModal';
-import DuplicateReviewGallery from './components/DuplicateReviewGallery';
-import ScreenshotReviewGallery from './components/ScreenshotReviewGallery';
-import ArchiveView from './components/ArchiveView';
-import SettingsModal from './components/SettingsModal';
-import { TagCreateModal, TagAssignPopover } from './components/TagManager';
-import StorageAnalytics from './components/StorageAnalytics';
-import TerraFormReview from './components/TerraFormReview';
+
+// Lazy: only load when the user actually opens these.
+const PhotoModal = lazy(() => import('./components/PhotoModal'));
+const CreateAlbumModal = lazy(() => import('./components/CreateAlbumModal'));
+const AddToAlbumModal = lazy(() => import('./components/AddToAlbumModal'));
+const ScanModal = lazy(() => import('./components/ScanModal'));
+const DuplicateReviewGallery = lazy(() => import('./components/DuplicateReviewGallery'));
+const ScreenshotReviewGallery = lazy(() => import('./components/ScreenshotReviewGallery'));
+const ArchiveView = lazy(() => import('./components/ArchiveView'));
+const SettingsModal = lazy(() => import('./components/SettingsModal'));
+const TagCreateModal = lazy(() =>
+  import('./components/TagManager').then((m) => ({ default: m.TagCreateModal }))
+);
+const TagAssignPopover = lazy(() =>
+  import('./components/TagManager').then((m) => ({ default: m.TagAssignPopover }))
+);
+const StorageAnalytics = lazy(() => import('./components/StorageAnalytics'));
+const TerraFormReview = lazy(() => import('./components/TerraFormReview'));
 
 import { AppProvider, useAppContext } from './contexts/AppContext';
 import { ViewProvider, useViewContext } from './contexts/ViewContext';
@@ -183,114 +190,149 @@ const AppLayout = () => {
         onEnterSelectionMode={() => setSelectionMode(true)}
       />
 
-      <PhotoModal
-        photo={selectedPhoto}
-        photos={flatVisiblePhotos}
-        onClose={() => setSelectedPhoto(null)}
-        onSelectPhoto={setSelectedPhoto}
-        onToggleFavorite={onToggleFavorite}
-        onArchive={onModalArchive}
-        onDelete={onModalDelete}
-        onReveal={onModalReveal}
-        onAddToAlbum={() => { /* TODO(phase-A): wire single-photo add-to-album from modal */ }}
-        onTagAssign={() => { /* TODO(phase-A): wire single-photo tag-assign from modal */ }}
-      />
-      <CreateAlbumModal
-        isOpen={showCreateAlbum}
-        onClose={() => setShowCreateAlbum(false)}
-        onCreate={handleCreateAlbum}
-      />
-      <AddToAlbumModal
-        isOpen={showAddToAlbum}
-        onClose={() => setShowAddToAlbum(false)}
-        albums={albums}
-        onSelect={onAddToAlbum}
-      />
+      <Suspense fallback={null}>
+        {selectedPhoto && (
+          <PhotoModal
+            photo={selectedPhoto}
+            photos={flatVisiblePhotos}
+            onClose={() => setSelectedPhoto(null)}
+            onSelectPhoto={setSelectedPhoto}
+            onToggleFavorite={onToggleFavorite}
+            onArchive={onModalArchive}
+            onDelete={onModalDelete}
+            onReveal={onModalReveal}
+            onAddToAlbum={() => { /* TODO(phase-A): wire single-photo add-to-album from modal */ }}
+            onTagAssign={() => { /* TODO(phase-A): wire single-photo tag-assign from modal */ }}
+          />
+        )}
 
-      <ScanModal
-        isOpen={showDuplicateScan}
-        onClose={handleDuplicateScanComplete}
-        title="Scanning for Duplicates"
-        progress={scanProgress}
-        phase={scanPhase}
-        icon={Copy}
-      />
-      <ScanModal
-        isOpen={showScreenshotScan}
-        onClose={handleScreenshotScanComplete}
-        title="Scanning for Screenshots"
-        progress={scanProgress}
-        phase={scanPhase}
-        icon={MonitorSmartphone}
-      />
-      <DuplicateReviewGallery
-        isOpen={showDuplicateReview}
-        onClose={() => setShowDuplicateReview(false)}
-        duplicateGroups={duplicateGroups}
-        onArchive={handleArchivePhotos}
-        onRefresh={refreshDuplicateGroups}
-      />
-      <ScreenshotReviewGallery
-        isOpen={showScreenshotReview}
-        onClose={() => setShowScreenshotReview(false)}
-        screenshots={screenshots}
-        onArchive={handleArchivePhotos}
-        onRefresh={refreshScreenshots}
-      />
-      <ArchiveView
-        isOpen={showArchive}
-        onClose={() => setShowArchive(false)}
-        archivedPhotos={archivedPhotos}
-        onRestore={handleRestorePhotos}
-        onRefresh={loadArchivedPhotos}
-      />
+        {showCreateAlbum && (
+          <CreateAlbumModal
+            isOpen={showCreateAlbum}
+            onClose={() => setShowCreateAlbum(false)}
+            onCreate={handleCreateAlbum}
+          />
+        )}
 
-      <SettingsModal
-        isOpen={showSettings}
-        onClose={() => setShowSettings(false)}
-        libraryPath={libraryPath}
-        onLibraryPathChange={setLibraryPath}
-        onPhotosChanged={loadPhotosFromDatabase}
-      />
+        {showAddToAlbum && (
+          <AddToAlbumModal
+            isOpen={showAddToAlbum}
+            onClose={() => setShowAddToAlbum(false)}
+            albums={albums}
+            onSelect={onAddToAlbum}
+          />
+        )}
 
-      <TagCreateModal
-        isOpen={showTagCreate}
-        onClose={() => { setShowTagCreate(false); setEditTag(null); }}
-        onSave={loadTags}
-        editTag={editTag}
-      />
-      <TagAssignPopover
-        isOpen={showTagAssign}
-        onClose={() => setShowTagAssign(false)}
-        photoPaths={Array.from(selectedPhotos)}
-        onTagsChanged={() => {
-          loadTags();
-          clearSelection();
-        }}
-      />
+        {showDuplicateScan && (
+          <ScanModal
+            isOpen={showDuplicateScan}
+            onClose={handleDuplicateScanComplete}
+            title="Scanning for Duplicates"
+            progress={scanProgress}
+            phase={scanPhase}
+            icon={Copy}
+          />
+        )}
 
-      <TerraFormReview
-        isOpen={showTerraForm}
-        onClose={() => {
-          setShowTerraForm(false);
-          loadPhotosFromDatabase();
-          invoke('get_unreviewed_count').then(setUnreviewedCount).catch(console.error);
-        }}
-      />
+        {showScreenshotScan && (
+          <ScanModal
+            isOpen={showScreenshotScan}
+            onClose={handleScreenshotScanComplete}
+            title="Scanning for Screenshots"
+            progress={scanProgress}
+            phase={scanPhase}
+            icon={MonitorSmartphone}
+          />
+        )}
 
-      <StorageAnalytics
-        isOpen={showStorageAnalytics}
-        onClose={() => setShowStorageAnalytics(false)}
-        onNavigateToPhoto={(path) => {
-          setShowStorageAnalytics(false);
-          const photo = photos.find(p => p.path === path);
-          if (photo) setSelectedPhoto(photo);
-        }}
-        onOpenDuplicateReview={() => {
-          setShowStorageAnalytics(false);
-          handleScanForDuplicates();
-        }}
-      />
+        {showDuplicateReview && (
+          <DuplicateReviewGallery
+            isOpen={showDuplicateReview}
+            onClose={() => setShowDuplicateReview(false)}
+            duplicateGroups={duplicateGroups}
+            onArchive={handleArchivePhotos}
+            onRefresh={refreshDuplicateGroups}
+          />
+        )}
+
+        {showScreenshotReview && (
+          <ScreenshotReviewGallery
+            isOpen={showScreenshotReview}
+            onClose={() => setShowScreenshotReview(false)}
+            screenshots={screenshots}
+            onArchive={handleArchivePhotos}
+            onRefresh={refreshScreenshots}
+          />
+        )}
+
+        {showArchive && (
+          <ArchiveView
+            isOpen={showArchive}
+            onClose={() => setShowArchive(false)}
+            archivedPhotos={archivedPhotos}
+            onRestore={handleRestorePhotos}
+            onRefresh={loadArchivedPhotos}
+          />
+        )}
+
+        {showSettings && (
+          <SettingsModal
+            isOpen={showSettings}
+            onClose={() => setShowSettings(false)}
+            libraryPath={libraryPath}
+            onLibraryPathChange={setLibraryPath}
+            onPhotosChanged={loadPhotosFromDatabase}
+          />
+        )}
+
+        {showTagCreate && (
+          <TagCreateModal
+            isOpen={showTagCreate}
+            onClose={() => { setShowTagCreate(false); setEditTag(null); }}
+            onSave={loadTags}
+            editTag={editTag}
+          />
+        )}
+
+        {showTagAssign && (
+          <TagAssignPopover
+            isOpen={showTagAssign}
+            onClose={() => setShowTagAssign(false)}
+            photoPaths={Array.from(selectedPhotos)}
+            onTagsChanged={() => {
+              loadTags();
+              clearSelection();
+            }}
+          />
+        )}
+
+        {showTerraForm && (
+          <TerraFormReview
+            isOpen={showTerraForm}
+            onClose={() => {
+              setShowTerraForm(false);
+              loadPhotosFromDatabase();
+              invoke('get_unreviewed_count').then(setUnreviewedCount).catch(console.error);
+            }}
+          />
+        )}
+
+        {showStorageAnalytics && (
+          <StorageAnalytics
+            isOpen={showStorageAnalytics}
+            onClose={() => setShowStorageAnalytics(false)}
+            onNavigateToPhoto={(path) => {
+              setShowStorageAnalytics(false);
+              const photo = photos.find(p => p.path === path);
+              if (photo) setSelectedPhoto(photo);
+            }}
+            onOpenDuplicateReview={() => {
+              setShowStorageAnalytics(false);
+              handleScanForDuplicates();
+            }}
+          />
+        )}
+      </Suspense>
     </div>
   );
 };

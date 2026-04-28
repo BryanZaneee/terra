@@ -32,6 +32,10 @@ const PhotoCard = ({ photo, isSelected, selectionMode, onPhotoClick, onToggleSel
         src={cardSrc}
         alt={photo.name}
         loading="lazy"
+        decoding="async"
+        width="256"
+        height="256"
+        draggable={false}
         className={`w-full h-full object-cover transition-transform duration-700 group-hover:scale-110 opacity-80 group-hover:opacity-100 ${isSelected ? 'scale-95' : ''}`}
         onError={(e) => {
           e.target.onerror = null;

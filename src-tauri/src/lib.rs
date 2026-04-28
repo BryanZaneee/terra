@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use rayon::prelude::*;
 use reverse_geocoder::ReverseGeocoder;
@@ -36,10 +36,22 @@ pub mod config {
     pub const MAX_VALID_YEAR: i32 = 2100;
 }
 
-/// Open a database connection with a consistent error format.
-/// Use directly when a command needs the connection across multiple steps.
-fn db_conn() -> Result<rusqlite::Connection, String> {
-    db::init_database().map_err(|e| format!("Database error: {}", e))
+/// Process-wide SQLite handle. SQLite serializes writes anyway and our query
+/// surface is small, so funneling every command through one Mutex-guarded
+/// connection avoids the per-call open + WAL-pragma + schema-check tax that
+/// `init_database()` used to pay every time. The first call initializes
+/// (open file, apply pragmas, run migrations); subsequent calls just lock.
+static DB: OnceLock<Mutex<rusqlite::Connection>> = OnceLock::new();
+
+/// Acquire the shared SQLite connection. Errors only on a poisoned mutex,
+/// which would mean a prior command panicked mid-transaction — fatal anyway.
+/// The MutexGuard derefs to `&Connection`, so callers can keep using
+/// `db::function(&conn, ...)` without changes.
+fn db_conn() -> Result<MutexGuard<'static, rusqlite::Connection>, String> {
+    let mutex = DB.get_or_init(|| {
+        Mutex::new(db::init_database().expect("Failed to initialize database"))
+    });
+    mutex.lock().map_err(|e| format!("DB mutex poisoned: {}", e))
 }
 
 /// Open a connection, run one db operation, and format any error.

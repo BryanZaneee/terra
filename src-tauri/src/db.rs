@@ -31,6 +31,10 @@ pub fn get_library_path() -> PathBuf {
     path
 }
 
+/// Bump when adding new ALTER TABLE migrations below.
+/// Cold start skips them entirely when user_version already matches.
+const SCHEMA_VERSION: i32 = 1;
+
 /// Initialize schema on an existing connection.
 /// Used by both init_database() and tests (with in-memory DBs).
 pub fn init_schema(conn: &Connection) -> SqlResult<()> {
@@ -53,37 +57,47 @@ pub fn init_schema(conn: &Connection) -> SqlResult<()> {
         [],
     )?;
 
-    // Attempt to add columns if they don't exist (for existing DBs)
-    let _ = conn.execute("ALTER TABLE photos ADD COLUMN is_favorite INTEGER DEFAULT 0", []);
-    let _ = conn.execute("ALTER TABLE photos ADD COLUMN content_hash TEXT", []);
-    let _ = conn.execute("ALTER TABLE photos ADD COLUMN latitude REAL", []);
-    let _ = conn.execute("ALTER TABLE photos ADD COLUMN longitude REAL", []);
-    let _ = conn.execute("ALTER TABLE photos ADD COLUMN location_name TEXT", []);
+    // Skip the ALTER TABLE backfill on every cold start once we've already
+    // applied them — they each rewrite sqlite_master, which is the slow path.
+    let user_version: i32 = conn
+        .query_row("SELECT user_version FROM pragma_user_version", [], |row| row.get(0))
+        .unwrap_or(0);
 
-    // New columns for duplicate/screenshot detection
-    let _ = conn.execute("ALTER TABLE photos ADD COLUMN dhash_64 INTEGER", []);
-    let _ = conn.execute("ALTER TABLE photos ADD COLUMN is_screenshot INTEGER DEFAULT 0", []);
-    let _ = conn.execute("ALTER TABLE photos ADD COLUMN archived_at INTEGER", []);
+    if user_version < SCHEMA_VERSION {
+        // Attempt to add columns if they don't exist (for existing DBs)
+        let _ = conn.execute("ALTER TABLE photos ADD COLUMN is_favorite INTEGER DEFAULT 0", []);
+        let _ = conn.execute("ALTER TABLE photos ADD COLUMN content_hash TEXT", []);
+        let _ = conn.execute("ALTER TABLE photos ADD COLUMN latitude REAL", []);
+        let _ = conn.execute("ALTER TABLE photos ADD COLUMN longitude REAL", []);
+        let _ = conn.execute("ALTER TABLE photos ADD COLUMN location_name TEXT", []);
 
-    // New columns for TerraForm and Smart Collections
-    let _ = conn.execute("ALTER TABLE photos ADD COLUMN reviewed_at INTEGER", []);
-    let _ = conn.execute("ALTER TABLE photos ADD COLUMN file_size INTEGER", []);
+        // New columns for duplicate/screenshot detection
+        let _ = conn.execute("ALTER TABLE photos ADD COLUMN dhash_64 INTEGER", []);
+        let _ = conn.execute("ALTER TABLE photos ADD COLUMN is_screenshot INTEGER DEFAULT 0", []);
+        let _ = conn.execute("ALTER TABLE photos ADD COLUMN archived_at INTEGER", []);
 
-    // New columns for enriched camera/lens/video metadata
-    let _ = conn.execute("ALTER TABLE photos ADD COLUMN camera_make TEXT", []);
-    let _ = conn.execute("ALTER TABLE photos ADD COLUMN camera_model TEXT", []);
-    let _ = conn.execute("ALTER TABLE photos ADD COLUMN lens_model TEXT", []);
-    let _ = conn.execute("ALTER TABLE photos ADD COLUMN iso INTEGER", []);
-    let _ = conn.execute("ALTER TABLE photos ADD COLUMN aperture REAL", []);
-    let _ = conn.execute("ALTER TABLE photos ADD COLUMN shutter_us INTEGER", []);
-    let _ = conn.execute("ALTER TABLE photos ADD COLUMN focal_length_mm REAL", []);
-    let _ = conn.execute("ALTER TABLE photos ADD COLUMN orientation INTEGER", []);
-    let _ = conn.execute("ALTER TABLE photos ADD COLUMN duration_ms INTEGER", []);
-    let _ = conn.execute("ALTER TABLE photos ADD COLUMN codec TEXT", []);
+        // New columns for TerraForm and Smart Collections
+        let _ = conn.execute("ALTER TABLE photos ADD COLUMN reviewed_at INTEGER", []);
+        let _ = conn.execute("ALTER TABLE photos ADD COLUMN file_size INTEGER", []);
 
-    // Thumbnail generation tracking. NULL = pending, 'ready' = on-disk thumb exists,
-    // 'failed' = decoder rejected (e.g. unsupported HEIC), 'unsupported' = video.
-    let _ = conn.execute("ALTER TABLE photos ADD COLUMN thumb_status TEXT", []);
+        // New columns for enriched camera/lens/video metadata
+        let _ = conn.execute("ALTER TABLE photos ADD COLUMN camera_make TEXT", []);
+        let _ = conn.execute("ALTER TABLE photos ADD COLUMN camera_model TEXT", []);
+        let _ = conn.execute("ALTER TABLE photos ADD COLUMN lens_model TEXT", []);
+        let _ = conn.execute("ALTER TABLE photos ADD COLUMN iso INTEGER", []);
+        let _ = conn.execute("ALTER TABLE photos ADD COLUMN aperture REAL", []);
+        let _ = conn.execute("ALTER TABLE photos ADD COLUMN shutter_us INTEGER", []);
+        let _ = conn.execute("ALTER TABLE photos ADD COLUMN focal_length_mm REAL", []);
+        let _ = conn.execute("ALTER TABLE photos ADD COLUMN orientation INTEGER", []);
+        let _ = conn.execute("ALTER TABLE photos ADD COLUMN duration_ms INTEGER", []);
+        let _ = conn.execute("ALTER TABLE photos ADD COLUMN codec TEXT", []);
+
+        // Thumbnail generation tracking. NULL = pending, 'ready' = on-disk thumb exists,
+        // 'failed' = decoder rejected (e.g. unsupported HEIC), 'unsupported' = video.
+        let _ = conn.execute("ALTER TABLE photos ADD COLUMN thumb_status TEXT", []);
+
+        conn.execute(&format!("PRAGMA user_version = {}", SCHEMA_VERSION), [])?;
+    }
 
     // Create albums table
     conn.execute(
@@ -207,6 +221,16 @@ pub fn init_schema(conn: &Connection) -> SqlResult<()> {
 pub fn init_database() -> SqlResult<Connection> {
     let db_path = get_db_path();
     let conn = Connection::open(db_path)?;
+    // WAL gives concurrent reads while writing; NORMAL durability is fine for a
+    // local desktop app; cache_size negative = KB. These three are the SQLite
+    // perf trifecta and pay for themselves on the very first query.
+    conn.execute_batch(
+        "PRAGMA journal_mode = WAL;\n\
+         PRAGMA synchronous = NORMAL;\n\
+         PRAGMA temp_store = MEMORY;\n\
+         PRAGMA cache_size = -64000;\n\
+         PRAGMA foreign_keys = ON;",
+    )?;
     init_schema(&conn)?;
     Ok(conn)
 }
