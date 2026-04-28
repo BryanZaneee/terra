@@ -43,11 +43,14 @@ export function usePhotos() {
     };
   }, []);
 
-  const loadPhotosFromDatabase = useCallback(async (filter = { kind: 'all' }) => {
+  const loadPhotosFromDatabase = useCallback(async (filter) => {
     if (!isMountedRef.current) return;
     if (CONFIG.USE_PAGINATION) {
-      // P.3: built-in views now pass a ViewFilter; album, tag, search, and
-      // smart collections still bypass this until P.4.
+      // `filter === undefined` means "reuse the last filter" — exactly what
+      // the cleanup hook needs after archive/delete so the user stays on
+      // their current view (e.g. Favorites) instead of snapping back to All.
+      // P.3: built-in views pass a ViewFilter; album/tag/search/smart
+      // collections still bypass this until P.4.
       await paged.loadFirstPage(filter);
       return;
     }
