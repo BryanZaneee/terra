@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
@@ -12,10 +12,12 @@ use walkdir::WalkDir;
 use log::{debug, error, info, warn};
 
 mod db;
+mod imports;
 mod media;
 mod metadata_enrich;
 mod thumbnails;
 
+use imports::{collect_export_media, ImportProvider};
 use media::{compute_dhash, detect_screenshot, hamming_distance, process_image, GEOCODER_LOCATIONS};
 use metadata_enrich::enrich_path;
 
@@ -106,6 +108,58 @@ pub struct PhotoMetadata {
     pub thumb_status: Option<String>,
 }
 
+#[derive(Serialize, Clone)]
+pub struct ProviderImportSummary {
+    pub provider_id: String,
+    pub provider_label: String,
+    pub discovered: usize,
+    pub imported: usize,
+    pub skipped_duplicates: usize,
+    pub unsupported: usize,
+    pub failed: usize,
+    pub imported_photos: Vec<PhotoMetadata>,
+}
+
+#[derive(Serialize, Clone)]
+pub struct ProviderImportProgress {
+    pub provider_id: String,
+    pub provider_label: String,
+    pub total: usize,
+    pub processed: usize,
+    pub imported: usize,
+    pub skipped_duplicates: usize,
+    pub failed: usize,
+    pub phase: String,
+}
+
+// ============================================================================
+// Pagination types (PAGINATION_PLAN.md)
+// ============================================================================
+
+/// Discriminates which slice of the library a page query targets.
+/// SQL builder in db::get_photos_page branches on this.
+/// P.1 ships only `All`; P.3–P.4 fill in the rest.
+#[derive(Deserialize, Debug, Clone)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ViewFilter {
+    All,
+}
+
+/// Cursor onto a row, by `(date_taken, id)`. Carrying both makes the walk
+/// stable even when many rows share a `date_taken`. Cursors are exclusive:
+/// the next page is strictly less than this position in DESC order.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct Cursor {
+    pub date_taken: i64,
+    pub id: i64,
+}
+
+#[derive(Serialize, Debug)]
+pub struct PageResult {
+    pub photos: Vec<PhotoMetadata>,
+    pub next_cursor: Option<Cursor>,
+}
+
 /// COMMAND: Get all photos from the database
 #[tauri::command]
 fn get_all_photos() -> Result<Vec<PhotoMetadata>, String> {
@@ -165,118 +219,286 @@ fn scan_directory(dir_path: String, save_to_db: bool) -> Result<Vec<PhotoMetadat
 fn upload_photos(file_paths: Vec<String>) -> Result<Vec<PhotoMetadata>, String> {
     info!("Uploading {} photos", file_paths.len());
 
+    let paths = file_paths.into_iter().map(PathBuf::from).collect();
+    let summary = import_media_paths(
+        paths,
+        "upload",
+        "Upload Photos",
+        "upload",
+        0,
+        None,
+    )?;
+
+    info!("Successfully uploaded {} photos", summary.imported);
+    Ok(summary.imported_photos)
+}
+
+/// COMMAND: Import a downloaded provider export folder or ZIP.
+#[tauri::command]
+async fn import_provider_export(
+    window: tauri::Window,
+    provider_id: String,
+    source_path: String,
+) -> Result<ProviderImportSummary, String> {
+    let provider = ImportProvider::from_id(&provider_id)?;
+    let source = PathBuf::from(&source_path);
+
+    info!(
+        "Importing {} export from {}",
+        provider.label(),
+        source.display()
+    );
+
+    let collection = collect_export_media(provider, &source)?;
+    let staging_dir = collection.staging_dir.clone();
+    let discovery = collection.discovery(provider, &source);
+
+    let _ = window.emit(
+        "provider_import_progress",
+        ProviderImportProgress {
+            provider_id: provider.id().to_string(),
+            provider_label: provider.label().to_string(),
+            total: discovery.discovered,
+            processed: 0,
+            imported: 0,
+            skipped_duplicates: 0,
+            failed: 0,
+            phase: "copying".to_string(),
+        },
+    );
+
+    let summary = import_media_paths(
+        collection.media_paths,
+        provider.id(),
+        provider.label(),
+        provider.id(),
+        collection.unsupported_count,
+        Some(&window),
+    )?;
+
+    if let Some(staging_dir) = staging_dir {
+        if let Err(err) = fs::remove_dir_all(&staging_dir) {
+            warn!(
+                "Failed to clean import staging folder {}: {}",
+                staging_dir.display(),
+                err
+            );
+        }
+    }
+
+    Ok(summary)
+}
+
+fn import_media_paths(
+    file_paths: Vec<PathBuf>,
+    provider_id: &str,
+    provider_label: &str,
+    source_type: &str,
+    unsupported_count: usize,
+    progress_window: Option<&tauri::Window>,
+) -> Result<ProviderImportSummary, String> {
     let library_path = db::get_library_path();
     let conn = db_conn()?;
 
     // Use cached geocoder locations for better performance
     let geocoder = ReverseGeocoder::new(&GEOCODER_LOCATIONS);
 
-    let uploaded_photos: Vec<PhotoMetadata> = file_paths
-        .iter()
-        .filter_map(|file_path| {
-            let source_path = Path::new(file_path);
-            if !source_path.exists() {
-                warn!("File not found: {}", file_path);
-                return None;
+    let total = file_paths.len();
+    let mut summary = ProviderImportSummary {
+        provider_id: provider_id.to_string(),
+        provider_label: provider_label.to_string(),
+        discovered: total,
+        imported: 0,
+        skipped_duplicates: 0,
+        unsupported: unsupported_count,
+        failed: 0,
+        imported_photos: Vec::new(),
+    };
+
+    for (index, source_path) in file_paths.iter().enumerate() {
+        if !source_path.exists() {
+            warn!("File not found during import: {}", source_path.display());
+            summary.failed += 1;
+            emit_import_progress(progress_window, &summary, total, index + 1, "copying");
+            continue;
+        }
+
+        if !imports::is_supported_media_path(source_path) {
+            summary.unsupported += 1;
+            emit_import_progress(progress_window, &summary, total, index + 1, "copying");
+            continue;
+        }
+
+        let mut photo = match process_image(source_path, Some(&geocoder)) {
+            Some(photo) => photo,
+            None => {
+                warn!("Failed to process import media: {}", source_path.display());
+                summary.failed += 1;
+                emit_import_progress(progress_window, &summary, total, index + 1, "copying");
+                continue;
             }
+        };
 
-            // Process the image to get metadata (especially date_taken)
-            let mut photo = process_image(source_path, Some(&geocoder))?;
-
-            // Check for duplicates
-            if let Some(hash) = &photo.content_hash {
-                match db::hash_exists(&conn, hash) {
-                    Ok(exists) => {
-                        if exists {
-                            debug!("Skipping duplicate photo: {} (hash: {})", photo.name, hash);
-                            return None;
-                        }
-                    },
-                    Err(e) => warn!("Failed to check hash existence: {}", e),
+        if let Some(hash) = &photo.content_hash {
+            match db::hash_exists(&conn, hash) {
+                Ok(true) => {
+                    debug!("Skipping duplicate import: {} (hash: {})", photo.name, hash);
+                    summary.skipped_duplicates += 1;
+                    emit_import_progress(progress_window, &summary, total, index + 1, "copying");
+                    continue;
                 }
+                Ok(false) => {}
+                Err(e) => warn!("Failed to check hash existence: {}", e),
             }
+        }
 
-            // Create year/month subdirectories based on date_taken
-            let date = chrono::DateTime::from_timestamp(photo.date_taken, 0)?;
-            let year = date.format("%Y").to_string();
-            let month = date.format("%m").to_string();
-
-            let mut dest_dir = library_path.clone();
-            dest_dir.push(&year);
-            dest_dir.push(&month);
-
-            // Create directories if they don't exist
-            fs::create_dir_all(&dest_dir).ok()?;
-
-            // Copy file to managed location
-            let file_name = source_path.file_name()?.to_string_lossy().to_string();
-            let mut dest_path = dest_dir;
-            dest_path.push(&file_name);
-
-            // Handle duplicate filenames by appending a number
-            let mut final_dest_path = dest_path.clone();
-            let mut counter = 1;
-            while final_dest_path.exists() {
-                let stem = source_path.file_stem()?.to_string_lossy();
-                let ext = source_path.extension()?.to_string_lossy();
-                final_dest_path = dest_path.with_file_name(format!("{}_{}.{}", stem, counter, ext));
-                counter += 1;
+        let date = match chrono::DateTime::from_timestamp(photo.date_taken, 0) {
+            Some(date) => date,
+            None => {
+                warn!(
+                    "Invalid import timestamp for {}: {}",
+                    source_path.display(),
+                    photo.date_taken
+                );
+                summary.failed += 1;
+                emit_import_progress(progress_window, &summary, total, index + 1, "copying");
+                continue;
             }
+        };
+        let year = date.format("%Y").to_string();
+        let month = date.format("%m").to_string();
 
-            // Copy the file
-            match fs::copy(source_path, &final_dest_path) {
-                Ok(_) => debug!("Copied {} to {}", file_path, final_dest_path.display()),
-                Err(e) => {
-                    error!("Failed to copy {}: {}", file_path, e);
-                    return None;
-                }
+        let mut dest_dir = library_path.clone();
+        dest_dir.push(&year);
+        dest_dir.push(&month);
+
+        if let Err(err) = fs::create_dir_all(&dest_dir) {
+            error!("Failed to create import destination {}: {}", dest_dir.display(), err);
+            summary.failed += 1;
+            emit_import_progress(progress_window, &summary, total, index + 1, "copying");
+            continue;
+        }
+
+        let file_name = match source_path.file_name() {
+            Some(name) => name.to_string_lossy().to_string(),
+            None => {
+                summary.failed += 1;
+                emit_import_progress(progress_window, &summary, total, index + 1, "copying");
+                continue;
             }
+        };
+        let mut dest_path = dest_dir;
+        dest_path.push(&file_name);
 
-            // Canonicalize the destination path for Tauri file access
-            let canonical_dest = match final_dest_path.canonicalize() {
-                Ok(p) => {
-                    debug!("Canonicalized destination: {}", p.display());
-                    p.to_string_lossy().to_string()
-                },
-                Err(e) => {
-                    warn!("Could not canonicalize destination {:?}: {}", final_dest_path, e);
-                    final_dest_path.to_string_lossy().to_string()
-                }
+        let mut final_dest_path = dest_path.clone();
+        let mut counter = 1;
+        while final_dest_path.exists() {
+            let stem = match source_path.file_stem() {
+                Some(stem) => stem.to_string_lossy(),
+                None => break,
             };
+            let ext = match source_path.extension() {
+                Some(ext) => ext.to_string_lossy(),
+                None => break,
+            };
+            final_dest_path = dest_path.with_file_name(format!("{}_{}.{}", stem, counter, ext));
+            counter += 1;
+        }
 
-            // Update photo path to the new canonicalized location
-            photo.path = canonical_dest.clone();
-            photo.name = final_dest_path.file_name()?.to_string_lossy().to_string();
-
-            // Save to database
-            match db::insert_photo(&conn, &photo, "upload") {
-                Ok(_) => debug!("Saved to database: {}", photo.name),
-                Err(e) => {
-                    error!("Failed to save {} to database: {}", photo.name, e);
-                    return None;
-                }
+        match fs::copy(source_path, &final_dest_path) {
+            Ok(_) => debug!(
+                "Copied {} to {}",
+                source_path.display(),
+                final_dest_path.display()
+            ),
+            Err(e) => {
+                error!("Failed to copy {}: {}", source_path.display(), e);
+                summary.failed += 1;
+                emit_import_progress(progress_window, &summary, total, index + 1, "copying");
+                continue;
             }
+        }
 
-            // Compute perceptual hash for duplicate detection
-            if let Some(dhash) = compute_dhash(&final_dest_path) {
-                let _ = db::update_photo_dhash(&conn, &photo.path, dhash as i64);
-                debug!("Computed dhash for {}: {}", photo.name, dhash);
+        let canonical_dest = match final_dest_path.canonicalize() {
+            Ok(p) => {
+                debug!("Canonicalized destination: {}", p.display());
+                p.to_string_lossy().to_string()
             }
-
-            // Detect if this is a screenshot
-            let is_screenshot = detect_screenshot(&photo.name, photo.width, photo.height);
-            if is_screenshot {
-                let _ = db::update_photo_screenshot_flag(&conn, &photo.path, true);
-                debug!("Detected screenshot: {}", photo.name);
+            Err(e) => {
+                warn!("Could not canonicalize destination {:?}: {}", final_dest_path, e);
+                final_dest_path.to_string_lossy().to_string()
             }
+        };
 
-            debug!("Successfully uploaded: {} -> {}", file_path, photo.path);
-            Some(photo)
-        })
-        .collect();
+        photo.path = canonical_dest.clone();
+        photo.name = match final_dest_path.file_name() {
+            Some(name) => name.to_string_lossy().to_string(),
+            None => file_name,
+        };
 
-    info!("Successfully uploaded {} photos", uploaded_photos.len());
-    Ok(uploaded_photos)
+        match db::insert_photo(&conn, &photo, source_type) {
+            Ok(_) => debug!("Saved imported media to database: {}", photo.name),
+            Err(e) => {
+                error!("Failed to save {} to database: {}", photo.name, e);
+                summary.failed += 1;
+                emit_import_progress(progress_window, &summary, total, index + 1, "copying");
+                continue;
+            }
+        }
+
+        if let Ok(metadata) = fs::metadata(&final_dest_path) {
+            let _ = db::update_photo_file_size(&conn, &photo.path, metadata.len() as i64);
+        }
+
+        if let Some(dhash) = compute_dhash(&final_dest_path) {
+            let _ = db::update_photo_dhash(&conn, &photo.path, dhash as i64);
+            debug!("Computed dhash for {}: {}", photo.name, dhash);
+        }
+
+        let is_screenshot = detect_screenshot(&photo.name, photo.width, photo.height);
+        if is_screenshot {
+            let _ = db::update_photo_screenshot_flag(&conn, &photo.path, true);
+            debug!("Detected screenshot: {}", photo.name);
+        }
+
+        debug!(
+            "Successfully imported: {} -> {}",
+            source_path.display(),
+            photo.path
+        );
+        summary.imported += 1;
+        summary.imported_photos.push(photo);
+        emit_import_progress(progress_window, &summary, total, index + 1, "copying");
+    }
+
+    emit_import_progress(progress_window, &summary, total, total, "complete");
+    Ok(summary)
+}
+
+fn emit_import_progress(
+    window: Option<&tauri::Window>,
+    summary: &ProviderImportSummary,
+    total: usize,
+    processed: usize,
+    phase: &str,
+) {
+    if let Some(window) = window {
+        if processed % 10 == 0 || processed == total || phase == "complete" {
+            let _ = window.emit(
+                "provider_import_progress",
+                ProviderImportProgress {
+                    provider_id: summary.provider_id.clone(),
+                    provider_label: summary.provider_label.clone(),
+                    total,
+                    processed,
+                    imported: summary.imported,
+                    skipped_duplicates: summary.skipped_duplicates,
+                    failed: summary.failed,
+                    phase: phase.to_string(),
+                },
+            );
+        }
+    }
 }
 
 #[tauri::command]
@@ -1160,6 +1382,31 @@ async fn generate_missing_thumbnails(app: tauri::AppHandle) -> Result<usize, Str
     Ok(count.load(Ordering::Relaxed))
 }
 
+// ============================================================================
+// Pagination commands (PAGINATION_PLAN.md, P.1)
+// ============================================================================
+
+/// COMMAND: Fetch a single page of photos for the given filter.
+/// `cursor=None` returns the first page. `next_cursor` in the result is
+/// `None` when no further rows exist.
+#[tauri::command]
+fn get_photos_page(
+    filter: ViewFilter,
+    cursor: Option<Cursor>,
+    limit: i64,
+) -> Result<PageResult, String> {
+    with_db("get_photos_page", |conn| {
+        db::get_photos_page(conn, &filter, cursor.as_ref(), limit)
+    })
+}
+
+/// COMMAND: Top-level counts for sidebar badges. Cheap COUNT(*) per category;
+/// frontend caches and refreshes after mutations.
+#[tauri::command]
+fn get_view_counts() -> Result<HashMap<String, i64>, String> {
+    with_db("get_view_counts", |conn| db::get_view_counts(conn))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Initialize logging. Set RUST_LOG=debug for verbose output.
@@ -1173,6 +1420,7 @@ pub fn run() {
             scan_directory,
             get_all_photos,
             upload_photos,
+            import_provider_export,
             toggle_favorite,
             create_album,
             delete_album,
@@ -1226,10 +1474,12 @@ pub fn run() {
             // Thumbnails
             get_thumb_cache_root,
             generate_missing_thumbnails,
+            // Pagination (PAGINATION_PLAN.md)
+            get_photos_page,
+            get_view_counts,
             // Finder integration
             reveal_in_finder
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
-

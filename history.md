@@ -28,6 +28,22 @@ provider-import edits. Existing React `act(...)` warnings remained.
 used later where a supported public API exists; for this pass, export
 folder/ZIP ingestion is the durable path.
 
+### 2026-04-28 — Backend export ingestion
+
+**What:** Added `src-tauri/src/imports.rs` to discover supported media in
+provider export folders or ZIP archives, stage ZIP media safely under Terra's
+app-data directory, and ignore common metadata sidecars. Added
+`import_provider_export` as a Tauri command and refactored the existing upload
+path through a shared managed-library import helper. The helper returns counts
+for discovered/imported/duplicate/unsupported/failed media and emits
+`provider_import_progress` events for provider imports.
+
+**Why local ZIP/folder ingestion first:** Apple Photos/iCloud and Snapchat do
+not provide a safe public full-library OAuth import path for Terra, and Google
+Photos full-library API access is no longer the right general solution. Local
+exports keep the app private, durable, and provider-policy friendly while still
+giving the user one Terra button to continue from after downloading an export.
+
 ---
 
 ## Active Effort: Polish to iOS / Google Photos Parity (started 2026-04-27)
