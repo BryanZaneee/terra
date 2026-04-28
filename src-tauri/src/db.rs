@@ -69,6 +69,18 @@ pub fn init_schema(conn: &Connection) -> SqlResult<()> {
     let _ = conn.execute("ALTER TABLE photos ADD COLUMN reviewed_at INTEGER", []);
     let _ = conn.execute("ALTER TABLE photos ADD COLUMN file_size INTEGER", []);
 
+    // New columns for enriched camera/lens/video metadata
+    let _ = conn.execute("ALTER TABLE photos ADD COLUMN camera_make TEXT", []);
+    let _ = conn.execute("ALTER TABLE photos ADD COLUMN camera_model TEXT", []);
+    let _ = conn.execute("ALTER TABLE photos ADD COLUMN lens_model TEXT", []);
+    let _ = conn.execute("ALTER TABLE photos ADD COLUMN iso INTEGER", []);
+    let _ = conn.execute("ALTER TABLE photos ADD COLUMN aperture REAL", []);
+    let _ = conn.execute("ALTER TABLE photos ADD COLUMN shutter_us INTEGER", []);
+    let _ = conn.execute("ALTER TABLE photos ADD COLUMN focal_length_mm REAL", []);
+    let _ = conn.execute("ALTER TABLE photos ADD COLUMN orientation INTEGER", []);
+    let _ = conn.execute("ALTER TABLE photos ADD COLUMN duration_ms INTEGER", []);
+    let _ = conn.execute("ALTER TABLE photos ADD COLUMN codec TEXT", []);
+
     // Create albums table
     conn.execute(
         "CREATE TABLE IF NOT EXISTS albums (
@@ -132,6 +144,12 @@ pub fn init_schema(conn: &Connection) -> SqlResult<()> {
     // Create index on file_size for Smart Collections
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_file_size ON photos(file_size)",
+        [],
+    )?;
+
+    // Composite index to support filtering by camera make/model
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_camera ON photos(camera_make, camera_model)",
         [],
     )?;
 
@@ -233,8 +251,15 @@ pub fn insert_photo(conn: &Connection, photo: &PhotoMetadata, source_type: &str)
     Ok(())
 }
 
-/// Map a row (with the standard 10-column SELECT) into a PhotoMetadata.
-/// Expected column order: path, name, date_taken, width, height, is_favorite, content_hash, latitude, longitude, location_name
+/// Columns selected by every query that returns PhotoMetadata rows.
+/// Order must match the index offsets in photo_from_row.
+const PHOTO_COLUMNS: &str =
+    "path, name, date_taken, width, height, is_favorite, content_hash, \
+     latitude, longitude, location_name, \
+     camera_make, camera_model, lens_model, iso, aperture, shutter_us, \
+     focal_length_mm, orientation, duration_ms, codec";
+
+/// Map a row produced by PHOTO_COLUMNS into a PhotoMetadata.
 fn photo_from_row(row: &rusqlite::Row) -> rusqlite::Result<PhotoMetadata> {
     Ok(PhotoMetadata {
         path: row.get(0)?,
@@ -247,15 +272,23 @@ fn photo_from_row(row: &rusqlite::Row) -> rusqlite::Result<PhotoMetadata> {
         latitude: row.get(7)?,
         longitude: row.get(8)?,
         location_name: row.get(9)?,
+        camera_make: row.get(10)?,
+        camera_model: row.get(11)?,
+        lens_model: row.get(12)?,
+        iso: row.get(13)?,
+        aperture: row.get(14)?,
+        shutter_us: row.get(15)?,
+        focal_length_mm: row.get(16)?,
+        orientation: row.get(17)?,
+        duration_ms: row.get(18)?,
+        codec: row.get(19)?,
     })
 }
 
 /// Get all photos from the database, sorted by date_taken descending
 pub fn get_all_photos(conn: &Connection) -> SqlResult<Vec<PhotoMetadata>> {
-    let mut stmt = conn.prepare(
-        "SELECT path, name, date_taken, width, height, is_favorite, content_hash, latitude, longitude, location_name
-         FROM photos ORDER BY date_taken DESC"
-    )?;
+    let query = format!("SELECT {} FROM photos ORDER BY date_taken DESC", PHOTO_COLUMNS);
+    let mut stmt = conn.prepare(&query)?;
     let rows = stmt.query_map([], photo_from_row)?;
     rows.collect()
 }
@@ -356,10 +389,13 @@ pub fn get_albums(conn: &Connection) -> SqlResult<Vec<Album>> {
 /// Get all photos in an album
 pub fn get_album_photos(conn: &Connection, album_id: i64) -> SqlResult<Vec<PhotoMetadata>> {
     let mut stmt = conn.prepare(
-        "SELECT p.path, p.name, p.date_taken, p.width, p.height, p.is_favorite, p.content_hash, p.latitude, p.longitude, p.location_name
-         FROM photos p
-         JOIN album_photos ap ON p.path = ap.photo_path
-         WHERE ap.album_id = ?1
+        "SELECT p.path, p.name, p.date_taken, p.width, p.height, p.is_favorite, p.content_hash, \
+         p.latitude, p.longitude, p.location_name, \
+         p.camera_make, p.camera_model, p.lens_model, p.iso, p.aperture, p.shutter_us, \
+         p.focal_length_mm, p.orientation, p.duration_ms, p.codec \
+         FROM photos p \
+         JOIN album_photos ap ON p.path = ap.photo_path \
+         WHERE ap.album_id = ?1 \
          ORDER BY p.date_taken DESC"
     )?;
     let rows = stmt.query_map(params![album_id], photo_from_row)?;
@@ -377,14 +413,15 @@ pub fn set_album_cover(conn: &Connection, album_id: i64, photo_path: &str) -> Sq
 
 /// Get all photos that have duplicates (same content_hash)
 pub fn get_duplicates(conn: &Connection) -> SqlResult<Vec<PhotoMetadata>> {
-    let mut stmt = conn.prepare(
-        "SELECT path, name, date_taken, width, height, is_favorite, content_hash, latitude, longitude, location_name
-         FROM photos
-         WHERE content_hash IN (
-             SELECT content_hash FROM photos GROUP BY content_hash HAVING COUNT(*) > 1
-         )
-         ORDER BY content_hash, date_taken DESC"
-    )?;
+    let query = format!(
+        "SELECT {} FROM photos \
+         WHERE content_hash IN ( \
+             SELECT content_hash FROM photos GROUP BY content_hash HAVING COUNT(*) > 1 \
+         ) \
+         ORDER BY content_hash, date_taken DESC",
+        PHOTO_COLUMNS
+    );
+    let mut stmt = conn.prepare(&query)?;
     let rows = stmt.query_map([], photo_from_row)?;
     rows.collect()
 }
@@ -392,12 +429,11 @@ pub fn get_duplicates(conn: &Connection) -> SqlResult<Vec<PhotoMetadata>> {
 /// Search photos by text (name or location)
 pub fn search_photos(conn: &Connection, query: &str) -> SqlResult<Vec<PhotoMetadata>> {
     let search_term = format!("%{}%", query);
-    let mut stmt = conn.prepare(
-        "SELECT path, name, date_taken, width, height, is_favorite, content_hash, latitude, longitude, location_name
-         FROM photos
-         WHERE name LIKE ?1 OR location_name LIKE ?1
-         ORDER BY date_taken DESC"
-    )?;
+    let sql = format!(
+        "SELECT {} FROM photos WHERE name LIKE ?1 OR location_name LIKE ?1 ORDER BY date_taken DESC",
+        PHOTO_COLUMNS
+    );
+    let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(params![search_term], photo_from_row)?;
     rows.collect()
 }
@@ -472,10 +508,11 @@ pub fn get_all_photos_with_dhash(conn: &Connection) -> SqlResult<Vec<(String, Op
 
 /// Get all photos marked as screenshots
 pub fn get_screenshots(conn: &Connection) -> SqlResult<Vec<PhotoMetadata>> {
-    let mut stmt = conn.prepare(
-        "SELECT path, name, date_taken, width, height, is_favorite, content_hash, latitude, longitude, location_name
-         FROM photos WHERE is_screenshot = 1 AND archived_at IS NULL ORDER BY date_taken DESC"
-    )?;
+    let query = format!(
+        "SELECT {} FROM photos WHERE is_screenshot = 1 AND archived_at IS NULL ORDER BY date_taken DESC",
+        PHOTO_COLUMNS
+    );
+    let mut stmt = conn.prepare(&query)?;
     let rows = stmt.query_map([], photo_from_row)?;
     rows.collect()
 }
@@ -501,11 +538,13 @@ pub fn restore_photo(conn: &Connection, path: &str) -> SqlResult<()> {
 
 /// Get all archived photos
 pub fn get_archived_photos(conn: &Connection) -> SqlResult<Vec<(PhotoMetadata, i64)>> {
-    let mut stmt = conn.prepare(
-        "SELECT path, name, date_taken, width, height, is_favorite, content_hash, latitude, longitude, location_name, archived_at
-         FROM photos WHERE archived_at IS NOT NULL ORDER BY archived_at DESC"
-    )?;
-    let rows = stmt.query_map([], |row| Ok((photo_from_row(row)?, row.get::<_, i64>(10)?)))?;
+    let query = format!(
+        "SELECT {}, archived_at FROM photos WHERE archived_at IS NOT NULL ORDER BY archived_at DESC",
+        PHOTO_COLUMNS
+    );
+    let mut stmt = conn.prepare(&query)?;
+    // archived_at is at index 20 (after the 20 PHOTO_COLUMNS fields)
+    let rows = stmt.query_map([], |row| Ok((photo_from_row(row)?, row.get::<_, i64>(20)?)))?;
     rows.collect()
 }
 
@@ -545,10 +584,11 @@ pub fn get_photos_with_dhash_count(conn: &Connection) -> SqlResult<i64> {
 
 /// Get all unreviewed photos (reviewed_at is NULL and not archived)
 pub fn get_unreviewed_photos(conn: &Connection) -> SqlResult<Vec<PhotoMetadata>> {
-    let mut stmt = conn.prepare(
-        "SELECT path, name, date_taken, width, height, is_favorite, content_hash, latitude, longitude, location_name
-         FROM photos WHERE reviewed_at IS NULL AND archived_at IS NULL ORDER BY date_taken DESC"
-    )?;
+    let query = format!(
+        "SELECT {} FROM photos WHERE reviewed_at IS NULL AND archived_at IS NULL ORDER BY date_taken DESC",
+        PHOTO_COLUMNS
+    );
+    let mut stmt = conn.prepare(&query)?;
     let rows = stmt.query_map([], photo_from_row)?;
     rows.collect()
 }
@@ -684,27 +724,29 @@ pub fn get_photos_by_tags(conn: &Connection, tag_ids: &[i64], match_all: bool) -
     let placeholders: Vec<String> = tag_ids.iter().map(|_| "?".to_string()).collect();
     let placeholder_str = placeholders.join(",");
 
+    let photo_cols = "p.path, p.name, p.date_taken, p.width, p.height, p.is_favorite, p.content_hash, \
+                      p.latitude, p.longitude, p.location_name, \
+                      p.camera_make, p.camera_model, p.lens_model, p.iso, p.aperture, p.shutter_us, \
+                      p.focal_length_mm, p.orientation, p.duration_ms, p.codec";
     let query = if match_all {
         // AND logic: photo must have ALL specified tags
         format!(
-            "SELECT p.path, p.name, p.date_taken, p.width, p.height, p.is_favorite, p.content_hash, p.latitude, p.longitude, p.location_name
-             FROM photos p
-             JOIN photo_tags pt ON p.path = pt.photo_path
-             WHERE pt.tag_id IN ({}) AND p.archived_at IS NULL
-             GROUP BY p.path
-             HAVING COUNT(DISTINCT pt.tag_id) = ?
+            "SELECT {} FROM photos p \
+             JOIN photo_tags pt ON p.path = pt.photo_path \
+             WHERE pt.tag_id IN ({}) AND p.archived_at IS NULL \
+             GROUP BY p.path \
+             HAVING COUNT(DISTINCT pt.tag_id) = ? \
              ORDER BY p.date_taken DESC",
-            placeholder_str
+            photo_cols, placeholder_str
         )
     } else {
         // OR logic: photo must have ANY of the specified tags
         format!(
-            "SELECT DISTINCT p.path, p.name, p.date_taken, p.width, p.height, p.is_favorite, p.content_hash, p.latitude, p.longitude, p.location_name
-             FROM photos p
-             JOIN photo_tags pt ON p.path = pt.photo_path
-             WHERE pt.tag_id IN ({}) AND p.archived_at IS NULL
+            "SELECT DISTINCT {} FROM photos p \
+             JOIN photo_tags pt ON p.path = pt.photo_path \
+             WHERE pt.tag_id IN ({}) AND p.archived_at IS NULL \
              ORDER BY p.date_taken DESC",
-            placeholder_str
+            photo_cols, placeholder_str
         )
     };
 
@@ -922,41 +964,37 @@ pub fn get_smart_collection_photos(conn: &Connection, collection_id: &str) -> Sq
     let seven_days_ago = now - (7 * 24 * 60 * 60);
     let thirty_days_ago = now - (30 * 24 * 60 * 60);
     let current_year = chrono::Utc::now().format("%Y").to_string();
+    let cols = PHOTO_COLUMNS;
 
-    let query = match collection_id {
-        "size_large" => "SELECT path, name, date_taken, width, height, is_favorite, content_hash, latitude, longitude, location_name FROM photos WHERE file_size > 5242880 AND archived_at IS NULL ORDER BY file_size DESC",
-        "size_medium" => "SELECT path, name, date_taken, width, height, is_favorite, content_hash, latitude, longitude, location_name FROM photos WHERE file_size BETWEEN 1048576 AND 5242880 AND archived_at IS NULL ORDER BY file_size DESC",
-        "size_small" => "SELECT path, name, date_taken, width, height, is_favorite, content_hash, latitude, longitude, location_name FROM photos WHERE file_size < 1048576 AND file_size > 0 AND archived_at IS NULL ORDER BY file_size DESC",
-        "dim_4k" => "SELECT path, name, date_taken, width, height, is_favorite, content_hash, latitude, longitude, location_name FROM photos WHERE (width >= 3840 OR height >= 2160) AND archived_at IS NULL ORDER BY date_taken DESC",
-        "dim_hd" => "SELECT path, name, date_taken, width, height, is_favorite, content_hash, latitude, longitude, location_name FROM photos WHERE (width >= 1920 OR height >= 1080) AND width < 3840 AND height < 2160 AND archived_at IS NULL ORDER BY date_taken DESC",
-        "dim_portrait" => "SELECT path, name, date_taken, width, height, is_favorite, content_hash, latitude, longitude, location_name FROM photos WHERE height > width AND width > 0 AND archived_at IS NULL ORDER BY date_taken DESC",
-        "dim_landscape" => "SELECT path, name, date_taken, width, height, is_favorite, content_hash, latitude, longitude, location_name FROM photos WHERE width > height AND height > 0 AND archived_at IS NULL ORDER BY date_taken DESC",
-        "status_unreviewed" => "SELECT path, name, date_taken, width, height, is_favorite, content_hash, latitude, longitude, location_name FROM photos WHERE reviewed_at IS NULL AND archived_at IS NULL ORDER BY date_taken DESC",
-        _ => return Ok(Vec::new()),
-    };
-
-    // Handle time-based queries separately due to parameters
+    // Time-based queries require bound parameters; handle before the static match.
     if collection_id == "time_7days" {
-        let mut stmt = conn.prepare(
-            "SELECT path, name, date_taken, width, height, is_favorite, content_hash, latitude, longitude, location_name
-             FROM photos WHERE date_taken > ?1 AND archived_at IS NULL ORDER BY date_taken DESC"
-        )?;
+        let sql = format!("SELECT {} FROM photos WHERE date_taken > ?1 AND archived_at IS NULL ORDER BY date_taken DESC", cols);
+        let mut stmt = conn.prepare(&sql)?;
         return query_photos(&mut stmt, params![seven_days_ago]);
     } else if collection_id == "time_30days" {
-        let mut stmt = conn.prepare(
-            "SELECT path, name, date_taken, width, height, is_favorite, content_hash, latitude, longitude, location_name
-             FROM photos WHERE date_taken > ?1 AND archived_at IS NULL ORDER BY date_taken DESC"
-        )?;
+        let sql = format!("SELECT {} FROM photos WHERE date_taken > ?1 AND archived_at IS NULL ORDER BY date_taken DESC", cols);
+        let mut stmt = conn.prepare(&sql)?;
         return query_photos(&mut stmt, params![thirty_days_ago]);
     } else if collection_id == "time_year" {
-        let mut stmt = conn.prepare(
-            "SELECT path, name, date_taken, width, height, is_favorite, content_hash, latitude, longitude, location_name
-             FROM photos WHERE strftime('%Y', date_taken, 'unixepoch') = ?1 AND archived_at IS NULL ORDER BY date_taken DESC"
-        )?;
+        let sql = format!("SELECT {} FROM photos WHERE strftime('%Y', date_taken, 'unixepoch') = ?1 AND archived_at IS NULL ORDER BY date_taken DESC", cols);
+        let mut stmt = conn.prepare(&sql)?;
         return query_photos(&mut stmt, params![current_year]);
     }
 
-    let mut stmt = conn.prepare(query)?;
+    let where_clause = match collection_id {
+        "size_large"       => "file_size > 5242880 AND archived_at IS NULL ORDER BY file_size DESC",
+        "size_medium"      => "file_size BETWEEN 1048576 AND 5242880 AND archived_at IS NULL ORDER BY file_size DESC",
+        "size_small"       => "file_size < 1048576 AND file_size > 0 AND archived_at IS NULL ORDER BY file_size DESC",
+        "dim_4k"           => "(width >= 3840 OR height >= 2160) AND archived_at IS NULL ORDER BY date_taken DESC",
+        "dim_hd"           => "(width >= 1920 OR height >= 1080) AND width < 3840 AND height < 2160 AND archived_at IS NULL ORDER BY date_taken DESC",
+        "dim_portrait"     => "height > width AND width > 0 AND archived_at IS NULL ORDER BY date_taken DESC",
+        "dim_landscape"    => "width > height AND height > 0 AND archived_at IS NULL ORDER BY date_taken DESC",
+        "status_unreviewed" => "reviewed_at IS NULL AND archived_at IS NULL ORDER BY date_taken DESC",
+        _ => return Ok(Vec::new()),
+    };
+
+    let sql = format!("SELECT {} FROM photos WHERE {}", cols, where_clause);
+    let mut stmt = conn.prepare(&sql)?;
     query_photos(&mut stmt, [])
 }
 
@@ -1133,6 +1171,45 @@ pub fn get_storage_analytics(conn: &Connection) -> SqlResult<StorageAnalytics> {
     })
 }
 
+// ============================================================================
+// Enriched Metadata Functions
+// ============================================================================
+
+/// Write enriched camera/lens/video metadata for a single photo path.
+/// Only the enrichment columns are updated; all other columns are untouched.
+pub fn update_enriched_metadata(conn: &Connection, path: &str, meta: &crate::metadata_enrich::EnrichedMetadata) -> SqlResult<()> {
+    conn.execute(
+        "UPDATE photos SET \
+         camera_make = ?1, camera_model = ?2, lens_model = ?3, \
+         iso = ?4, aperture = ?5, shutter_us = ?6, focal_length_mm = ?7, \
+         orientation = ?8, duration_ms = ?9, codec = ?10 \
+         WHERE path = ?11",
+        params![
+            meta.camera_make,
+            meta.camera_model,
+            meta.lens_model,
+            meta.iso,
+            meta.aperture,
+            meta.shutter_us,
+            meta.focal_length_mm,
+            meta.orientation,
+            meta.duration_ms,
+            meta.codec,
+            path,
+        ],
+    )?;
+    Ok(())
+}
+
+/// Get paths of photos that have not yet been enriched (camera_make IS NULL).
+pub fn get_photos_without_enrichment(conn: &Connection) -> SqlResult<Vec<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT path FROM photos WHERE camera_make IS NULL AND archived_at IS NULL"
+    )?;
+    let rows = stmt.query_map([], |row| row.get(0))?;
+    rows.collect()
+}
+
 /// Update file size for a photo
 pub fn update_photo_file_size(conn: &Connection, path: &str, size: i64) -> SqlResult<()> {
     conn.execute(
@@ -1168,6 +1245,16 @@ mod tests {
             latitude: None,
             longitude: None,
             location_name: None,
+            camera_make: None,
+            camera_model: None,
+            lens_model: None,
+            iso: None,
+            aperture: None,
+            shutter_us: None,
+            focal_length_mm: None,
+            orientation: None,
+            duration_ms: None,
+            codec: None,
         }
     }
 

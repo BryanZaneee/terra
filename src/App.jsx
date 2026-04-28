@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { Copy, MonitorSmartphone } from 'lucide-react';
 
@@ -23,6 +23,7 @@ import TerraFormReview from './components/TerraFormReview';
 import { AppProvider, useAppContext } from './contexts/AppContext';
 import { ViewProvider, useViewContext } from './contexts/ViewContext';
 import { useSelection } from './hooks/useSelection';
+import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 
 const AppLayout = () => {
   const {
@@ -46,7 +47,7 @@ const AppLayout = () => {
   } = useAppContext();
 
   const {
-    viewMode, setViewMode, searchQuery, handleSearch,
+    viewMode, setViewMode, cycleViewMode, searchQuery, handleSearch,
     smartCollections, loadSmartCollections,
     groupedPhotos, flatVisiblePhotos, expandedGroups, toggleGroup,
     unreviewedCount, setUnreviewedCount,
@@ -69,6 +70,14 @@ const AppLayout = () => {
   const [showStorageAnalytics, setShowStorageAnalytics] = useState(false);
   const [showTerraForm, setShowTerraForm] = useState(false);
 
+  const searchInputRef = useRef(null);
+
+  useKeyboardShortcuts({
+    enabled: !selectedPhoto,
+    onFocusSearch: () => searchInputRef.current?.focus(),
+    onCycleViewMode: cycleViewMode,
+  });
+
   const onPhotoClick = (photo, e) => {
     handlePhotoClick(photo, e, setSelectedPhoto);
   };
@@ -81,6 +90,24 @@ const AppLayout = () => {
   const onToggleFavorite = (photo) => {
     handleToggleFavorite(photo, selectedPhoto, setSelectedPhoto);
   };
+
+  const onModalArchive = useCallback((photo) => {
+    handleArchivePhotos([photo.path]);
+    setSelectedPhoto(null);
+  }, [handleArchivePhotos]);
+
+  const onModalDelete = useCallback((photo) => {
+    if (!window.confirm('Delete this photo permanently? This cannot be undone.')) return;
+    handleDeleteSelected(new Set([photo.path]), () => setSelectedPhoto(null), loadAlbums, loadLocations);
+  }, [handleDeleteSelected, loadAlbums, loadLocations]);
+
+  const onModalReveal = useCallback(async (photo) => {
+    try {
+      await invoke('reveal_in_finder', { path: photo.path });
+    } catch (err) {
+      console.error('Failed to reveal in Finder:', err);
+    }
+  }, []);
 
   const onAddToAlbum = async (albumId) => {
     try {
@@ -108,6 +135,7 @@ const AppLayout = () => {
         setViewMode={setViewMode}
         searchQuery={searchQuery}
         handleSearch={handleSearch}
+        searchInputRef={searchInputRef}
         albums={albums}
         tags={tags}
         selectedTagIds={selectedTagIds}
@@ -156,8 +184,15 @@ const AppLayout = () => {
 
       <PhotoModal
         photo={selectedPhoto}
+        photos={flatVisiblePhotos}
         onClose={() => setSelectedPhoto(null)}
+        onSelectPhoto={setSelectedPhoto}
         onToggleFavorite={onToggleFavorite}
+        onArchive={onModalArchive}
+        onDelete={onModalDelete}
+        onReveal={onModalReveal}
+        onAddToAlbum={() => { /* TODO(phase-A): wire single-photo add-to-album from modal */ }}
+        onTagAssign={() => { /* TODO(phase-A): wire single-photo tag-assign from modal */ }}
       />
       <CreateAlbumModal
         isOpen={showCreateAlbum}

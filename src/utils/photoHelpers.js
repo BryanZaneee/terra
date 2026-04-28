@@ -5,17 +5,13 @@ import { convertFileSrc } from '@tauri-apps/api/core';
  */
 export function processPhotos(rawPhotos) {
   return rawPhotos.map(p => ({
+    ...p,
     id: p.path,
     url: convertFileSrc(p.path),
     date: p.date_taken,
-    name: p.name,
-    width: p.width,
-    height: p.height,
-    path: p.path,
-    is_favorite: p.is_favorite,
     mediaType: p.name.match(/\.(mp4|mov|avi|webm|mkv)$/i) ? 'video' : 'photo',
     location: p.location_name,
-    hash: p.content_hash
+    hash: p.content_hash,
   }));
 }
 

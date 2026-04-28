@@ -77,7 +77,7 @@ export function usePhotos() {
 
       setStatusWithTimeout(`Successfully uploaded ${uploaded.length} photos!`);
     } catch (err) {
-      setError(`Failed to upload photos: ${err}`);
+      setError(typeof err === 'string' ? err : err?.message ?? 'Failed to upload photos');
       console.error('Upload error:', err);
       setUploadStatus('');
     } finally {
@@ -110,7 +110,7 @@ export function usePhotos() {
       loadLocations();
     } catch (err) {
       console.error("Failed to delete photos:", err);
-      setError("Failed to delete items");
+      setError(typeof err === 'string' ? err : err?.message ?? 'Failed to delete items');
     }
   }, []);
 

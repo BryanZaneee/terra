@@ -1,5 +1,6 @@
 import { Camera, ChevronDown, ChevronRight } from 'lucide-react';
 import PhotoCard from './PhotoCard';
+import { SkeletonGrid } from './Skeleton';
 
 const PhotoGrid = ({
   loading,
@@ -13,16 +14,12 @@ const PhotoGrid = ({
   onToggleSelection,
   uploadStatus,
 }) => {
-  if (loading) {
-    return (
-      <div className="h-[60vh] flex flex-col items-center justify-center space-y-4">
-        <div className="w-12 h-12 border-2 border-white/20 border-t-emerald-400 rounded-full animate-spin"></div>
-        <div className="font-mono text-sm text-white/50 animate-pulse">{uploadStatus || 'Processing...'}</div>
-      </div>
-    );
+  // Initial load: no photos yet — show skeleton tiles
+  if (loading && photos.length === 0) {
+    return <SkeletonGrid rows={3} cols={5} />;
   }
 
-  if (photos.length === 0) {
+  if (!loading && photos.length === 0) {
     return (
       <div className="h-[60vh] flex flex-col items-center justify-center space-y-4">
         <Camera size={48} className="text-white/20" />
@@ -36,6 +33,13 @@ const PhotoGrid = ({
 
   return (
     <div className="space-y-8 pb-20">
+      {/* Refresh indicator: photos already visible, just show a small status pill */}
+      {loading && uploadStatus && (
+        <div className="fixed top-4 right-4 z-50 flex items-center space-x-2 bg-black/60 backdrop-blur-sm border border-white/10 rounded-full px-3 py-1.5">
+          <div className="w-3 h-3 border border-white/20 border-t-emerald-400 rounded-full animate-spin" />
+          <span className="font-mono text-xs text-white/60">{uploadStatus}</span>
+        </div>
+      )}
       {groupedPhotos.map(([groupKey, groupItems]) => (
         <div key={groupKey} className="animate-in fade-in slide-in-from-bottom-4 duration-500">
           <div className="flex items-center space-x-2 mb-4 cursor-pointer select-none group" onClick={() => toggleGroup(groupKey)}>

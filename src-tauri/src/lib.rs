@@ -13,8 +13,10 @@ use log::{debug, error, info, warn};
 
 mod db;
 mod media;
+mod metadata_enrich;
 
 use media::{compute_dhash, detect_screenshot, hamming_distance, process_image, GEOCODER_LOCATIONS};
+use metadata_enrich::enrich_path;
 
 /// Application configuration constants
 pub mod config {
@@ -62,6 +64,28 @@ pub struct PhotoMetadata {
     pub latitude: Option<f64>,
     pub longitude: Option<f64>,
     pub location_name: Option<String>,
+    // Enriched camera/lens metadata (populated by enrich_photo_metadata)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub camera_make: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub camera_model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lens_model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub iso: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aperture: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shutter_us: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub focal_length_mm: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub orientation: Option<i32>,
+    // Enriched video metadata
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub codec: Option<String>,
 }
 
 /// COMMAND: Get all photos from the database
@@ -984,6 +1008,77 @@ async fn populate_file_sizes(window: tauri::Window) -> Result<ScanProgress, Stri
     })
 }
 
+// ============================================================================
+// Metadata Enrichment Commands
+// ============================================================================
+
+/// COMMAND: Enrich a single photo's metadata via the Python exiftool wrapper.
+#[tauri::command]
+fn enrich_photo_metadata(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    let meta = enrich_path(&app, &path)?;
+    let conn = db_conn()?;
+    db::update_enriched_metadata(&conn, &path, &meta)
+        .map_err(|e| format!("Failed to save enriched metadata: {}", e))
+}
+
+/// COMMAND: Backfill enriched metadata for all photos lacking camera_make.
+/// Emits `metadata_enrich_progress` events every 10 photos.
+/// Returns the count of photos successfully enriched.
+#[tauri::command]
+async fn enrich_all_metadata(app: tauri::AppHandle) -> Result<usize, String> {
+    use rayon::prelude::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use tauri::Emitter;
+
+    let conn = db_conn()?;
+    let paths = db::get_photos_without_enrichment(&conn)
+        .map_err(|e| format!("Failed to get unenriched photos: {}", e))?;
+
+    let total = paths.len();
+    let enriched_count = Arc::new(AtomicUsize::new(0));
+
+    // Collect (path, result) pairs in parallel; each thread spawns its own python3.
+    let results: Vec<(String, Result<metadata_enrich::EnrichedMetadata, String>)> = paths
+        .par_iter()
+        .map(|path| {
+            let result = enrich_path(&app, path);
+            (path.clone(), result)
+        })
+        .collect();
+
+    // Write results sequentially and emit progress events.
+    let write_conn = db_conn()?;
+    for (i, (path, result)) in results.into_iter().enumerate() {
+        if let Ok(meta) = result {
+            if db::update_enriched_metadata(&write_conn, &path, &meta).is_ok() {
+                enriched_count.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+
+        if (i + 1) % 10 == 0 || i + 1 == total {
+            let _ = app.emit("metadata_enrich_progress", serde_json::json!({
+                "processed": i + 1,
+                "total": total,
+            }));
+        }
+    }
+
+    Ok(enriched_count.load(Ordering::Relaxed))
+}
+
+#[tauri::command]
+fn reveal_in_finder(path: String) -> Result<(), String> {
+    if !Path::new(&path).exists() {
+        return Err(format!("Path does not exist: {}", path));
+    }
+    std::process::Command::new("open")
+        .args(["-R", &path])
+        .spawn()
+        .map_err(|e| format!("Failed to reveal in Finder: {}", e))?;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Initialize logging. Set RUST_LOG=debug for verbose output.
@@ -1043,7 +1138,12 @@ pub fn run() {
             get_smart_collection_photos,
             // Storage Analytics
             get_storage_analytics,
-            populate_file_sizes
+            populate_file_sizes,
+            // Metadata Enrichment
+            enrich_photo_metadata,
+            enrich_all_metadata,
+            // Finder integration
+            reveal_in_finder
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

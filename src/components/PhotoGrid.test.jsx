@@ -8,38 +8,73 @@ const mockPhotos = [
 
 const mockGrouped = [['All Photos', mockPhotos]];
 
+const defaultProps = {
+  loading: false,
+  photos: [],
+  groupedPhotos: [],
+  expandedGroups: {},
+  toggleGroup: vi.fn(),
+  selectedPhotos: new Set(),
+  selectionMode: false,
+  onPhotoClick: vi.fn(),
+  onToggleSelection: vi.fn(),
+  uploadStatus: '',
+};
+
 describe('PhotoGrid', () => {
-  it('shows loading spinner when loading', () => {
-    render(
+  it('shows skeleton grid on initial load (loading=true, no photos)', () => {
+    const { container } = render(
       <PhotoGrid
+        {...defaultProps}
         loading={true}
         photos={[]}
         groupedPhotos={[]}
-        expandedGroups={{}}
-        toggleGroup={vi.fn()}
-        selectedPhotos={new Set()}
-        selectionMode={false}
-        onPhotoClick={vi.fn()}
-        onToggleSelection={vi.fn()}
-        uploadStatus=""
       />
     );
-    expect(screen.getByText('Processing...')).toBeInTheDocument();
+    // SkeletonGrid renders a grid of skeleton cards; spinner text is gone
+    expect(screen.queryByText('Processing...')).not.toBeInTheDocument();
+    const grid = container.querySelector('.grid');
+    expect(grid).toBeTruthy();
+    // default rows=3, cols=5 → 15 skeleton cards
+    expect(grid.children.length).toBe(15);
   });
 
-  it('shows empty state when no photos', () => {
+  it('keeps photos visible on refresh (loading=true, photos exist)', () => {
     render(
       <PhotoGrid
+        {...defaultProps}
+        loading={true}
+        photos={mockPhotos}
+        groupedPhotos={mockGrouped}
+        expandedGroups={{ 'All Photos': true }}
+      />
+    );
+    // Real photos remain rendered — no skeleton takeover
+    expect(screen.getByAltText('1.jpg')).toBeInTheDocument();
+    expect(screen.queryByText('Processing...')).not.toBeInTheDocument();
+  });
+
+  it('shows status pill during refresh when uploadStatus is set', () => {
+    render(
+      <PhotoGrid
+        {...defaultProps}
+        loading={true}
+        photos={mockPhotos}
+        groupedPhotos={mockGrouped}
+        expandedGroups={{ 'All Photos': true }}
+        uploadStatus="Uploading 3 photos..."
+      />
+    );
+    expect(screen.getByText('Uploading 3 photos...')).toBeInTheDocument();
+  });
+
+  it('shows empty state when no photos and not loading', () => {
+    render(
+      <PhotoGrid
+        {...defaultProps}
         loading={false}
         photos={[]}
         groupedPhotos={[]}
-        expandedGroups={{}}
-        toggleGroup={vi.fn()}
-        selectedPhotos={new Set()}
-        selectionMode={false}
-        onPhotoClick={vi.fn()}
-        onToggleSelection={vi.fn()}
-        uploadStatus=""
       />
     );
     expect(screen.getByText(/No photos in library yet/)).toBeInTheDocument();
@@ -48,16 +83,11 @@ describe('PhotoGrid', () => {
   it('renders grouped photos', () => {
     render(
       <PhotoGrid
+        {...defaultProps}
         loading={false}
         photos={mockPhotos}
         groupedPhotos={mockGrouped}
         expandedGroups={{ 'All Photos': true }}
-        toggleGroup={vi.fn()}
-        selectedPhotos={new Set()}
-        selectionMode={false}
-        onPhotoClick={vi.fn()}
-        onToggleSelection={vi.fn()}
-        uploadStatus=""
       />
     );
     expect(screen.getByText('All Photos')).toBeInTheDocument();
@@ -68,16 +98,11 @@ describe('PhotoGrid', () => {
   it('hides photos when group is collapsed', () => {
     render(
       <PhotoGrid
+        {...defaultProps}
         loading={false}
         photos={mockPhotos}
         groupedPhotos={mockGrouped}
         expandedGroups={{ 'All Photos': false }}
-        toggleGroup={vi.fn()}
-        selectedPhotos={new Set()}
-        selectionMode={false}
-        onPhotoClick={vi.fn()}
-        onToggleSelection={vi.fn()}
-        uploadStatus=""
       />
     );
     expect(screen.getByText('All Photos')).toBeInTheDocument();

@@ -318,6 +318,16 @@ pub(crate) fn process_image(path: &Path, geocoder: Option<&ReverseGeocoder>) -> 
         latitude,
         longitude,
         location_name,
+        camera_make: None,
+        camera_model: None,
+        lens_model: None,
+        iso: None,
+        aperture: None,
+        shutter_us: None,
+        focal_length_mm: None,
+        orientation: None,
+        duration_ms: None,
+        codec: None,
     })
 }
 

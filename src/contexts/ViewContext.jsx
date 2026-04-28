@@ -137,6 +137,14 @@ export function ViewProvider({ children }) {
     setExpandedGroups(prev => ({ ...prev, [groupKey]: !prev[groupKey] }));
   };
 
+  const cycleViewMode = () => {
+    const idx = REGULAR_VIEWS.indexOf(viewMode);
+    const next = idx === -1
+      ? REGULAR_VIEWS[0]
+      : REGULAR_VIEWS[(idx + 1) % REGULAR_VIEWS.length];
+    setViewMode(next);
+  };
+
   // Auto-expand new groups whenever the visible group set changes
   useEffect(() => {
     const currentKeys = groupedPhotos.map(([key]) => key).join('|');
@@ -153,6 +161,7 @@ export function ViewProvider({ children }) {
   const value = {
     viewMode,
     setViewMode,
+    cycleViewMode,
     searchQuery,
     handleSearch,
     locations,

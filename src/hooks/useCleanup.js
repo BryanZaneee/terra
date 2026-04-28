@@ -40,7 +40,7 @@ export function useCleanup({ loadPhotosFromDatabase, setStatusWithTimeout, setEr
     } catch (err) {
       console.error("Failed to scan for duplicates:", err);
       setShowDuplicateScan(false);
-      setError("Failed to scan for duplicates");
+      setError(typeof err === 'string' ? err : err?.message ?? 'Failed to scan for duplicates');
     } finally {
       unlisten();
     }
@@ -68,7 +68,7 @@ export function useCleanup({ loadPhotosFromDatabase, setStatusWithTimeout, setEr
     } catch (err) {
       console.error("Failed to scan for screenshots:", err);
       setShowScreenshotScan(false);
-      setError("Failed to scan for screenshots");
+      setError(typeof err === 'string' ? err : err?.message ?? 'Failed to scan for screenshots');
     } finally {
       unlisten();
     }
@@ -94,7 +94,7 @@ export function useCleanup({ loadPhotosFromDatabase, setStatusWithTimeout, setEr
       }
     } catch (err) {
       console.error("Failed to archive photos:", err);
-      setError("Failed to archive photos");
+      setError(typeof err === 'string' ? err : err?.message ?? 'Failed to archive photos');
     }
   }, [loadPhotosFromDatabase, setStatusWithTimeout, setError, showDuplicateReview, showScreenshotReview]);
 
@@ -106,7 +106,7 @@ export function useCleanup({ loadPhotosFromDatabase, setStatusWithTimeout, setEr
       loadArchivedPhotos();
     } catch (err) {
       console.error("Failed to restore photos:", err);
-      setError("Failed to restore photos");
+      setError(typeof err === 'string' ? err : err?.message ?? 'Failed to restore photos');
     }
   }, [loadPhotosFromDatabase, setStatusWithTimeout, setError]);
 

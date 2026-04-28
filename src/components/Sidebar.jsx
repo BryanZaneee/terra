@@ -13,6 +13,7 @@ const Sidebar = ({
   setViewMode,
   searchQuery,
   handleSearch,
+  searchInputRef,
   albums,
   tags,
   selectedTagIds,
@@ -64,8 +65,9 @@ const Sidebar = ({
 
         <div className="relative mt-4 mb-2">
           <input
+            ref={searchInputRef}
             type="text"
-            placeholder="Search photos..."
+            placeholder="Search photos... (/)"
             value={searchQuery}
             onChange={(e) => handleSearch(e.target.value)}
             className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500/50 pl-9"

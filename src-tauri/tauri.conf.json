@@ -18,6 +18,7 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "resources": ["../scripts"],
     "publisher": "Bryan Zane",
     "longDescription": "High-performance local photo gallery for macOS capable of browsing massive libraries with a unique aesthetic.",
     "macOS": {

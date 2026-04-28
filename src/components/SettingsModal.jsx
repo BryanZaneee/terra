@@ -1,15 +1,30 @@
 import React, { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { open } from '@tauri-apps/plugin-dialog';
-import { X, Settings, FolderOpen, AlertTriangle } from 'lucide-react';
+import { X, Settings, FolderOpen, AlertTriangle, Sparkles } from 'lucide-react';
 
 const SettingsModal = ({ isOpen, onClose, libraryPath, onLibraryPathChange }) => {
   const [currentPath, setCurrentPath] = useState(libraryPath || '');
   const [saving, setSaving] = useState(false);
 
+  const [enrichRunning, setEnrichRunning] = useState(false);
+  const [enrichProgress, setEnrichProgress] = useState({ processed: 0, total: 0 });
+  const [enrichResult, setEnrichResult] = useState(null);
+  const [enrichError, setEnrichError] = useState(null);
+
   useEffect(() => {
     setCurrentPath(libraryPath || '');
   }, [libraryPath]);
+
+  useEffect(() => {
+    if (!enrichRunning) return;
+    let unlisten;
+    listen('metadata_enrich_progress', (event) => {
+      setEnrichProgress(event.payload);
+    }).then((u) => { unlisten = u; });
+    return () => { if (unlisten) unlisten(); };
+  }, [enrichRunning]);
 
   if (!isOpen) return null;
 
@@ -28,6 +43,28 @@ const SettingsModal = ({ isOpen, onClose, libraryPath, onLibraryPathChange }) =>
       setSaving(false);
     }
   };
+
+  const handleEnrichMetadata = async () => {
+    setEnrichRunning(true);
+    setEnrichResult(null);
+    setEnrichError(null);
+    setEnrichProgress({ processed: 0, total: 0 });
+    try {
+      const count = await invoke('enrich_all_metadata');
+      setEnrichResult(count);
+    } catch (err) {
+      const msg = typeof err === 'string' ? err : err?.message ?? 'Failed to enrich metadata';
+      setEnrichError(msg);
+    } finally {
+      setEnrichRunning(false);
+    }
+  };
+
+  const enrichPercent = enrichProgress.total > 0
+    ? Math.round((enrichProgress.processed / enrichProgress.total) * 100)
+    : 0;
+
+  const exiftoolMissing = enrichError && /exiftool/i.test(enrichError);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
@@ -63,6 +100,60 @@ const SettingsModal = ({ isOpen, onClose, libraryPath, onLibraryPathChange }) =>
               <AlertTriangle size={14} className="shrink-0 mt-0.5 text-yellow-500/60" />
               <span>New uploads will go to the new path. Existing photos stay in their current location.</span>
             </div>
+          </div>
+
+          {/* Photo Metadata Enrichment */}
+          <div className="pt-4 border-t border-white/10">
+            <label className="block text-sm font-medium text-white/70 mb-2">Photo Metadata</label>
+            <p className="text-xs text-white/40 mb-3">
+              Extract camera, lens, ISO, aperture, shutter speed, focal length, and video codec/duration from your photos to enable richer filtering. Uses <code className="font-mono text-emerald-400/80">exiftool</code> via a local Python script.
+            </p>
+
+            <button
+              onClick={handleEnrichMetadata}
+              disabled={enrichRunning}
+              className="flex items-center gap-2 px-4 py-2 bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-400/30 hover:border-emerald-400/50 rounded-lg text-sm text-emerald-200 transition-colors disabled:opacity-50"
+            >
+              <Sparkles size={16} />
+              {enrichRunning ? 'Enriching…' : 'Enrich All Photos'}
+            </button>
+
+            {enrichRunning && (
+              <div className="mt-3 space-y-1">
+                <div className="flex justify-between text-xs font-mono text-white/50">
+                  <span>{enrichProgress.processed} / {enrichProgress.total || '?'}</span>
+                  <span>{enrichPercent}%</span>
+                </div>
+                <div className="h-1.5 bg-white/10 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-emerald-400 transition-all duration-300"
+                    style={{ width: `${enrichPercent}%` }}
+                  />
+                </div>
+              </div>
+            )}
+
+            {enrichResult != null && !enrichRunning && (
+              <div className="mt-3 text-xs text-emerald-400 font-mono">
+                Enriched {enrichResult} photo{enrichResult === 1 ? '' : 's'}.
+              </div>
+            )}
+
+            {enrichError && !enrichRunning && (
+              <div className="mt-3 px-3 py-2 rounded-lg bg-red-500/10 border border-red-400/20 text-xs text-red-300 font-mono">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle size={14} className="shrink-0 mt-0.5 text-red-400" />
+                  <div className="flex-1 break-words">
+                    <div>{enrichError}</div>
+                    {exiftoolMissing && (
+                      <div className="mt-2 text-white/70">
+                        Install with: <code className="text-emerald-400">brew install exiftool</code>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
