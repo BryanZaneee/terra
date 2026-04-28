@@ -33,3 +33,7 @@ __pycache__/
 
 # AI files
 CLAUDE.md
+
+# Playwright MCP artifacts (visual verification screenshots, console logs)
+.playwright-mcp/
+terra-*.png

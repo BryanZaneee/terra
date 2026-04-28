@@ -7,6 +7,29 @@ Newest active effort first; completed efforts kept below for context.
 
 ---
 
+## Active Effort: Provider Export Imports (started 2026-04-28)
+
+**Goal.** Add a first Terra-native import experience for iCloud/Apple Photos,
+Google Photos, and Snapchat without pretending every provider has a safe
+full-library OAuth API. The UX should offer provider selection, explain the
+real import route, link to the official export/download flow, and ingest the
+resulting local folder or ZIP into Terra's managed library.
+
+**Branch start.** `codex/provider-imports` started from a dirty but passing
+workspace. The pre-existing local changes already covered gallery
+scale/performance work, including virtualized gallery rendering, thumbnail
+cache plumbing, SQLite connection reuse/WAL setup, and TerraForm Review swipe
+interactions.
+
+**Baseline verification.** `npm run test:run` passed with 152 tests before
+provider-import edits. Existing React `act(...)` warnings remained.
+
+**Direction.** Keep imports local-first. Direct provider sign-in should only be
+used later where a supported public API exists; for this pass, export
+folder/ZIP ingestion is the durable path.
+
+---
+
 ## Active Effort: Polish to iOS / Google Photos Parity (started 2026-04-27)
 
 **Goal.** Bring Terra's UX polish and feature surface up to a level that
