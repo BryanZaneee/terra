@@ -2,10 +2,11 @@ import { invoke } from '@tauri-apps/api/core';
 import {
   Grid, Calendar, Heart, Plus, Upload, Folder, Copy,
   MonitorSmartphone, Archive, Eye, BarChart3, Settings,
-  Image as ImageIcon, Cloud, HardDrive
+  Image as ImageIcon, Cloud, HardDrive, Sun, Moon
 } from 'lucide-react';
 import SmartCollections from './SmartCollections';
 import CloudProviderButton from './CloudProviderButton';
+import { useTheme } from '../contexts/ThemeContext';
 
 const Sidebar = ({
   photos,
@@ -34,18 +35,29 @@ const Sidebar = ({
   onOpenTerraForm,
   onOpenStorageAnalytics,
 }) => {
+  const { isLight, toggleTheme } = useTheme();
   return (
     <div className="fixed left-4 top-4 bottom-4 w-64 rounded-2xl border border-white/10 bg-black/30 backdrop-blur-xl shadow-2xl flex flex-col z-20 overflow-hidden">
       <div className="p-6 border-b border-white/5">
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-bold tracking-tighter bg-gradient-to-r from-emerald-200 to-white/50 bg-clip-text text-transparent">TERRA</h1>
-          <button
-            onClick={onSettings}
-            className="p-1.5 rounded-lg hover:bg-white/10 text-white/30 hover:text-white/60 transition-colors"
-            title="Settings"
-          >
-            <Settings size={16} />
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={toggleTheme}
+              className="p-1.5 rounded-lg hover:bg-white/10 text-white/30 hover:text-white/60 transition-colors"
+              title={isLight ? 'Switch to dark mode' : 'Switch to light mode'}
+              aria-label={isLight ? 'Switch to dark mode' : 'Switch to light mode'}
+            >
+              {isLight ? <Moon size={16} /> : <Sun size={16} />}
+            </button>
+            <button
+              onClick={onSettings}
+              className="p-1.5 rounded-lg hover:bg-white/10 text-white/30 hover:text-white/60 transition-colors"
+              title="Settings"
+            >
+              <Settings size={16} />
+            </button>
+          </div>
         </div>
         <div className="text-xs text-white/40 font-mono mt-1 tracking-widest">LOCAL LIBRARY</div>
         {photos.length > 0 && (

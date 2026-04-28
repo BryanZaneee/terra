@@ -4,10 +4,15 @@ export default {
     "./index.html",
     "./src/**/*.{js,ts,jsx,tsx}",
   ],
+  darkMode: ['selector', '[data-theme="dark"]'],
   theme: {
     extend: {
       fontFamily: {
         mono: ['Monaco', 'Courier New', 'monospace'],
+      },
+      colors: {
+        surface: 'rgb(var(--color-surface) / <alpha-value>)',
+        ink: 'rgb(var(--color-ink) / <alpha-value>)',
       },
       animation: {
         'in': 'fadeIn 0.5s ease-in-out',

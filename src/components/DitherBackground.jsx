@@ -1,8 +1,17 @@
 import { useRef, useEffect } from 'react';
 import { CONFIG } from '../config';
+import { useTheme } from '../contexts/ThemeContext';
+
+const THEME_COLORS = {
+  dark: { bg: '#050505', fg: '#2a2a2a' },
+  light: { bg: '#f1ede4', fg: '#c8c2b4' },
+};
 
 const DitherBackground = () => {
   const canvasRef = useRef(null);
+  const { theme } = useTheme();
+  const themeRef = useRef(theme);
+  themeRef.current = theme;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -58,9 +67,10 @@ const DitherBackground = () => {
       }
       lastFrameTime = currentTime - (elapsed % frameInterval);
 
-      ctx.fillStyle = '#050505';
+      const palette = THEME_COLORS[themeRef.current] || THEME_COLORS.dark;
+      ctx.fillStyle = palette.bg;
       ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.fillStyle = '#2a2a2a';
+      ctx.fillStyle = palette.fg;
       ctx.font = `${fontSize}px monospace`;
 
       const cols = Math.ceil(canvas.width / charWidth);

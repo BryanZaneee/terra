@@ -22,6 +22,7 @@ import TerraFormReview from './components/TerraFormReview';
 
 import { AppProvider, useAppContext } from './contexts/AppContext';
 import { ViewProvider, useViewContext } from './contexts/ViewContext';
+import { ThemeProvider } from './contexts/ThemeContext';
 import { useSelection } from './hooks/useSelection';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 
@@ -296,11 +297,13 @@ const AppLayout = () => {
 
 const App = () => (
   <ErrorBoundary>
-    <AppProvider>
-      <ViewProvider>
-        <AppLayout />
-      </ViewProvider>
-    </AppProvider>
+    <ThemeProvider>
+      <AppProvider>
+        <ViewProvider>
+          <AppLayout />
+        </ViewProvider>
+      </AppProvider>
+    </ThemeProvider>
   </ErrorBoundary>
 );
 

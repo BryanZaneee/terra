@@ -8,6 +8,32 @@
   box-sizing: border-box;
 }
 
+/* ─── Theme tokens ──────────────────────────────────────────────────────── */
+:root,
+[data-theme='dark'] {
+  --color-bg: 5 5 5;
+  --color-surface: 26 26 26;
+  --color-ink: 255 255 255;
+  --color-scrollbar-track: 0 0 0;
+  --color-scrollbar-thumb: 255 255 255;
+  color-scheme: dark;
+}
+
+[data-theme='light'] {
+  --color-bg: 241 237 228;
+  --color-surface: 255 255 255;
+  --color-ink: 15 23 42;
+  --color-scrollbar-track: 15 23 42;
+  --color-scrollbar-thumb: 15 23 42;
+  color-scheme: light;
+}
+
+html,
+body {
+  background-color: rgb(var(--color-bg));
+  color: rgb(var(--color-ink));
+}
+
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
     'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
@@ -15,23 +41,174 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   overflow-x: hidden;
+  transition: background-color 200ms ease, color 200ms ease;
 }
 
-/* Custom scrollbar for dark theme */
+/* ─── Scrollbar ─────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;
 }
 
 ::-webkit-scrollbar-track {
-  background: rgba(0, 0, 0, 0.1);
+  background: rgb(var(--color-scrollbar-track) / 0.1);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.2);
+  background: rgb(var(--color-scrollbar-thumb) / 0.2);
   border-radius: 5px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.3);
+  background: rgb(var(--color-scrollbar-thumb) / 0.35);
+}
+
+/* ─── Light-theme overrides for dark Tailwind utilities ─────────────────── */
+/*
+ * The codebase is built around dark color tokens (bg-white/N, text-white/N,
+ * bg-black/N, bg-[#1a1a1a]). Rather than refactor every component, we override
+ * those utilities with theme-appropriate values when [data-theme='light'] is
+ * active on the document root. The attribute+class selector beats Tailwind's
+ * single-class specificity, so the overrides win without !important.
+ *
+ * Approach: every dark-glass surface (white/black with alpha) flips to a
+ * dark-on-paper equivalent, and gradients used as photo overlays flip to
+ * light-on-paper so that light-mode `text-white` (which we re-tint dark)
+ * stays legible on top of them.
+ */
+
+/* Translucent black surfaces → translucent white surfaces. */
+[data-theme='light'] .bg-black\/30 { background-color: rgb(255 255 255 / 0.55); }
+[data-theme='light'] .bg-black\/40 { background-color: rgb(255 255 255 / 0.65); }
+[data-theme='light'] .bg-black\/50 { background-color: rgb(255 255 255 / 0.72); }
+[data-theme='light'] .bg-black\/60 { background-color: rgb(255 255 255 / 0.82); }
+[data-theme='light'] .bg-black\/70 { background-color: rgb(255 255 255 / 0.88); }
+[data-theme='light'] .bg-black\/80 { background-color: rgb(241 237 228 / 0.85); }
+[data-theme='light'] .bg-black\/90 { background-color: rgb(241 237 228 / 0.92); }
+[data-theme='light'] .bg-black\/95 { background-color: rgb(241 237 228 / 0.96); }
+[data-theme='light'] .bg-black { background-color: rgb(241 237 228); }
+
+[data-theme='light'] .hover\:bg-black\/40:hover { background-color: rgb(255 255 255 / 0.65); }
+[data-theme='light'] .hover\:bg-black\/70:hover { background-color: rgb(255 255 255 / 0.88); }
+
+/* Translucent white surfaces → translucent ink surfaces. */
+[data-theme='light'] .bg-white\/5 { background-color: rgb(15 23 42 / 0.04); }
+[data-theme='light'] .bg-white\/10 { background-color: rgb(15 23 42 / 0.08); }
+[data-theme='light'] .bg-white\/20 { background-color: rgb(15 23 42 / 0.14); }
+[data-theme='light'] .bg-white\/30 { background-color: rgb(15 23 42 / 0.22); }
+[data-theme='light'] .bg-white { background-color: rgb(255 255 255); }
+
+[data-theme='light'] .hover\:bg-white\/5:hover { background-color: rgb(15 23 42 / 0.04); }
+[data-theme='light'] .hover\:bg-white\/10:hover { background-color: rgb(15 23 42 / 0.08); }
+[data-theme='light'] .hover\:bg-white\/20:hover { background-color: rgb(15 23 42 / 0.14); }
+
+/* Hardcoded near-black surfaces. */
+[data-theme='light'] .bg-\[\#1a1a1a\] { background-color: rgb(255 255 255); }
+[data-theme='light'] .bg-\[\#1a1a1a\]\/90 { background-color: rgb(255 255 255 / 0.94); }
+[data-theme='light'] .bg-\[\#0a0a0a\] { background-color: rgb(241 237 228); }
+
+/* Text — fade white-on-dark to ink-on-paper. */
+[data-theme='light'] .text-white { color: rgb(15 23 42); }
+[data-theme='light'] .text-white\/90 { color: rgb(15 23 42 / 0.92); }
+[data-theme='light'] .text-white\/80 { color: rgb(15 23 42 / 0.85); }
+[data-theme='light'] .text-white\/70 { color: rgb(15 23 42 / 0.75); }
+[data-theme='light'] .text-white\/60 { color: rgb(15 23 42 / 0.65); }
+[data-theme='light'] .text-white\/50 { color: rgb(15 23 42 / 0.55); }
+[data-theme='light'] .text-white\/40 { color: rgb(15 23 42 / 0.5); }
+[data-theme='light'] .text-white\/30 { color: rgb(15 23 42 / 0.45); }
+[data-theme='light'] .text-white\/20 { color: rgb(15 23 42 / 0.35); }
+
+[data-theme='light'] .hover\:text-white:hover { color: rgb(15 23 42); }
+[data-theme='light'] .hover\:text-white\/90:hover { color: rgb(15 23 42 / 0.92); }
+[data-theme='light'] .hover\:text-white\/80:hover { color: rgb(15 23 42 / 0.85); }
+[data-theme='light'] .hover\:text-white\/70:hover { color: rgb(15 23 42 / 0.75); }
+[data-theme='light'] .hover\:text-white\/60:hover { color: rgb(15 23 42 / 0.65); }
+[data-theme='light'] .hover\:text-white\/50:hover { color: rgb(15 23 42 / 0.55); }
+
+[data-theme='light'] .text-gray-100 { color: rgb(15 23 42); }
+[data-theme='light'] .text-gray-200 { color: rgb(30 41 59); }
+[data-theme='light'] .text-gray-300 { color: rgb(51 65 85); }
+
+/* Fill / stroke utilities (Lucide icons use currentColor, but fill-white is set
+ * explicitly in a few places — keep them aligned with the text override). */
+[data-theme='light'] .fill-white { fill: rgb(15 23 42); }
+[data-theme='light'] .stroke-white { stroke: rgb(15 23 42); }
+
+/* Borders — flip white outlines to ink outlines with appropriate alpha. */
+[data-theme='light'] .border-white\/5 { border-color: rgb(15 23 42 / 0.06); }
+[data-theme='light'] .border-white\/10 { border-color: rgb(15 23 42 / 0.1); }
+[data-theme='light'] .border-white\/15 { border-color: rgb(15 23 42 / 0.12); }
+[data-theme='light'] .border-white\/20 { border-color: rgb(15 23 42 / 0.16); }
+[data-theme='light'] .border-white\/30 { border-color: rgb(15 23 42 / 0.22); }
+[data-theme='light'] .border-white\/40 { border-color: rgb(15 23 42 / 0.3); }
+
+[data-theme='light'] .hover\:border-white\/5:hover { border-color: rgb(15 23 42 / 0.06); }
+[data-theme='light'] .hover\:border-white\/10:hover { border-color: rgb(15 23 42 / 0.1); }
+[data-theme='light'] .hover\:border-white\/20:hover { border-color: rgb(15 23 42 / 0.16); }
+[data-theme='light'] .hover\:border-white\/30:hover { border-color: rgb(15 23 42 / 0.22); }
+[data-theme='light'] .focus\:border-white\/20:focus { border-color: rgb(15 23 42 / 0.16); }
+[data-theme='light'] .divide-white\/10 > :not([hidden]) ~ :not([hidden]) { border-color: rgb(15 23 42 / 0.1); }
+
+/* Selection */
+[data-theme='light'] .selection\:bg-white\/20::selection,
+[data-theme='light'] .selection\:bg-white\/20 ::selection { background-color: rgb(16 185 129 / 0.3); }
+[data-theme='light'] .selection\:text-white::selection,
+[data-theme='light'] .selection\:text-white ::selection { color: rgb(15 23 42); }
+
+/* Soften shadows — dark drop shadows look like ink smudges on paper. */
+[data-theme='light'] .shadow-2xl { box-shadow: 0 12px 40px -8px rgb(15 23 42 / 0.15), 0 4px 12px -4px rgb(15 23 42 / 0.08); }
+[data-theme='light'] .shadow-xl { box-shadow: 0 8px 24px -6px rgb(15 23 42 / 0.12), 0 2px 6px -2px rgb(15 23 42 / 0.06); }
+[data-theme='light'] .shadow-lg { box-shadow: 0 4px 16px -4px rgb(15 23 42 / 0.1); }
+
+/* TERRA logo gradient: emerald → ghost-white reads as emerald on light bg.
+ * Re-anchor the right stop to slate so it's visible. */
+[data-theme='light'] .from-emerald-200 { --tw-gradient-from: rgb(5 150 105) var(--tw-gradient-from-position); }
+[data-theme='light'] .to-white\/50 { --tw-gradient-to: rgb(15 23 42 / 0.6) var(--tw-gradient-to-position); }
+
+/* Photo overlays: dark gradient + white text needs to invert so text-white
+ * (now dark) is legible on top of an image. Flip the gradient stops to
+ * paper-toned. */
+[data-theme='light'] .from-black\/80 { --tw-gradient-from: rgb(255 255 255 / 0.92) var(--tw-gradient-from-position); --tw-gradient-to: rgb(255 255 255 / 0) var(--tw-gradient-to-position); --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to); }
+[data-theme='light'] .from-black\/60 { --tw-gradient-from: rgb(255 255 255 / 0.78) var(--tw-gradient-from-position); --tw-gradient-to: rgb(255 255 255 / 0) var(--tw-gradient-to-position); --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to); }
+
+/* White-tinted decorative dividers (group headers etc.) need ink in light. */
+[data-theme='light'] .from-white\/20 { --tw-gradient-from: rgb(15 23 42 / 0.2) var(--tw-gradient-from-position); --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to, rgb(15 23 42 / 0)); }
+[data-theme='light'] .from-white\/10 { --tw-gradient-from: rgb(15 23 42 / 0.1) var(--tw-gradient-from-position); --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to, rgb(15 23 42 / 0)); }
+
+/* Common accent colors (emerald-400 etc.) sit fine on dark bg but are too pale
+ * on white. Bump them to the 600/500 step for contrast. */
+[data-theme='light'] .text-emerald-400 { color: rgb(5 150 105); }
+[data-theme='light'] .text-emerald-400\/60 { color: rgb(5 150 105 / 0.75); }
+[data-theme='light'] .text-emerald-400\/80 { color: rgb(5 150 105 / 0.9); }
+[data-theme='light'] .text-emerald-300 { color: rgb(4 120 87); }
+[data-theme='light'] .text-emerald-200 { color: rgb(5 150 105); }
+[data-theme='light'] .hover\:text-emerald-400:hover { color: rgb(5 150 105); }
+[data-theme='light'] .hover\:text-emerald-300:hover { color: rgb(4 120 87); }
+[data-theme='light'] .text-red-400 { color: rgb(220 38 38); }
+[data-theme='light'] .text-red-300 { color: rgb(185 28 28); }
+[data-theme='light'] .text-red-500 { color: rgb(220 38 38); }
+[data-theme='light'] .hover\:text-red-400:hover { color: rgb(220 38 38); }
+[data-theme='light'] .text-yellow-400 { color: rgb(202 138 4); }
+[data-theme='light'] .hover\:text-yellow-400:hover { color: rgb(202 138 4); }
+[data-theme='light'] .text-yellow-400\/70 { color: rgb(202 138 4 / 0.85); }
+[data-theme='light'] .text-yellow-500\/60 { color: rgb(202 138 4 / 0.85); }
+[data-theme='light'] .text-blue-400 { color: rgb(37 99 235); }
+[data-theme='light'] .text-orange-400 { color: rgb(234 88 12); }
+
+/* Custom emerald-glow shadow on photo cards reads green-tinged, which is fine
+ * either way but a touch softer on light. */
+[data-theme='light'] .hover\:shadow-\[0_0_30px_rgba\(52\,211\,153\,0\.1\)\]:hover {
+  box-shadow: 0 0 30px rgba(16, 185, 129, 0.18);
+}
+
+/* Recharts: gridlines and tick text are inline-styled to white-with-alpha.
+ * Override at the SVG element level so charts read on a paper background. */
+[data-theme='light'] .recharts-cartesian-grid line {
+  stroke: rgb(15 23 42 / 0.08);
+}
+[data-theme='light'] .recharts-cartesian-axis-tick-value {
+  fill: rgb(15 23 42 / 0.6);
+}
+[data-theme='light'] .recharts-default-legend .recharts-legend-item-text {
+  color: rgb(15 23 42 / 0.7) !important;
 }
