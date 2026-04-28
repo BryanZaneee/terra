@@ -21,3 +21,11 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({
 HTMLVideoElement.prototype.play = vi.fn().mockResolvedValue(undefined);
 HTMLVideoElement.prototype.pause = vi.fn();
 HTMLVideoElement.prototype.load = vi.fn();
+
+// jsdom doesn't implement ResizeObserver; react-virtuoso uses it for sizing.
+class ResizeObserverStub {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+globalThis.ResizeObserver = globalThis.ResizeObserver || ResizeObserverStub;

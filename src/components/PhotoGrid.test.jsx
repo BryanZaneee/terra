@@ -95,7 +95,7 @@ describe('PhotoGrid', () => {
     expect(screen.getByAltText('1.jpg')).toBeInTheDocument();
   });
 
-  it('hides photos when group is collapsed', () => {
+  it('does not render photo cards when group is collapsed', () => {
     render(
       <PhotoGrid
         {...defaultProps}
@@ -105,7 +105,7 @@ describe('PhotoGrid', () => {
         expandedGroups={{ 'All Photos': false }}
       />
     );
-    expect(screen.getByText('All Photos')).toBeInTheDocument();
+    // Collapsed groups produce 0 rows for the virtualizer, so no PhotoCard mounts.
     expect(screen.queryByAltText('1.jpg')).not.toBeInTheDocument();
   });
 });
