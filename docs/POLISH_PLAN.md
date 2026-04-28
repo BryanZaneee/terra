@@ -23,11 +23,10 @@ of scope; rationale is at the bottom.
 
 1. **Photo viewer is shallow** — `PhotoModal.jsx` is 54 lines: no swipe/keyboard nav,
    no zoom/pan, no info panel (EXIF/GPS hidden), no delete from modal, no share.
-2. **No scale story yet** — gallery uses original-resolution images via `asset://`,
-   no thumbnail cache, no virtualization. Already roadmap item #1.
+2. **Scale story needs validation** — thumbnail caching and virtualized rendering now exist, but video thumbnails, full cursor pagination rollout, and 50k-100k library validation are still pending.
 3. **Discovery is thin** — search is `LIKE %term%` on filename + location only, no
    filters, no memories, no map view despite GPS being indexed.
-4. **Cloud-import buttons are placeholders.** Already roadmap items #2–#5.
+4. **Cloud/social imports need deeper source handling.** V1 folder/ZIP import exists for Apple/iCloud, Google Takeout, Snapchat, and generic local exports; persisted jobs and sidecar metadata reconciliation remain roadmap work.
 5. **Video is half-supported** — playback works, but `width=0, height=0`, no duration,
    no thumbnail.
 
@@ -160,12 +159,14 @@ sequence (search "Paris" → date filter → favorite filter), under 5 seconds.
 Follow the roadmap as written; add these specifics:
 
 **D1. Generic ImportJob domain (Rust)**
-- New `src-tauri/src/imports/` with submodules per source.
+- Current v1: `src-tauri/src/imports.rs` discovers media inside provider export folders or ZIPs, and `import_provider_export` returns summary counts with progress events.
+- Next: split into `src-tauri/src/imports/` submodules per source as complexity grows.
 - New tables: `import_jobs(id, source, status, progress, totals, errors_json,
   started_at, finished_at)`, `import_job_items(job_id, src_path, status,
   reason, photo_id)`.
 - Phases: preflight (count, size, dedupe estimate) → execute → reconcile.
-- Progress events: `import_progress`, `import_complete`.
+- Progress events: keep `provider_import_progress` for v1 or migrate to
+  `import_progress` / `import_complete` when jobs are persisted.
 
 **D2. Adapters** (in priority order, each = 1–2 days):
 - `imports/google_takeout.rs` — walk Takeout dirs, pair media with `.json`

@@ -14,18 +14,22 @@ Terra has moved beyond the original scan-only MVP. The core local library is imp
 - Albums and bulk add-to-album workflows.
 - Tags, bulk tagging, and per-photo tag management.
 - Full-screen photo viewer and video playback.
+- Generated thumbnail cache for photo grid performance.
+- Virtualized gallery rendering through `react-virtuoso`.
 - Duplicate detection using exact content hashes and perceptual hashes.
 - Screenshot detection and review.
 - Archive/restore flow with automatic cleanup after 14 days.
 - TerraForm Review for quickly keeping or archiving unreviewed photos.
 - Storage analytics for media type totals, largest files, storage by year/month, screenshots, and estimated duplicate savings.
+- Provider import wizard for Apple Photos/iCloud, Google Photos, Snapchat, and generic local exports.
+- Local folder/ZIP export ingestion with SHA-256 dedupe, progress events, and imported/duplicate/unsupported/failed summaries.
 
 Still planned:
 
-- Generated thumbnail cache.
-- Virtualized gallery rendering for very large libraries.
-- Import pipelines for Google Photos Takeout, Apple Photos/iCloud, Snapchat, and other social/cloud archives.
-- More advanced cloud migration tools and source-specific metadata reconciliation.
+- Persisted import job history, dry-run/preflight summaries, and per-item failure records.
+- Source-specific metadata reconciliation for Google Takeout JSON sidecars, Apple export sidecars, and Snapchat archive metadata.
+- Direct provider integrations only where a supported public API exists, such as a future Google Photos Picker selected-item flow.
+- Video thumbnail generation and deeper HEIC handling.
 
 ## Tech Stack
 
@@ -36,7 +40,8 @@ Still planned:
 - Styling: Tailwind CSS
 - Charts: Recharts
 - Icons: Lucide React
-- Metadata and media helpers: `rexif`, `image`, `sha2`, `image_hasher`, `reverse_geocoder`
+- Gallery virtualization: React Virtuoso
+- Metadata and media helpers: `rexif`, `image`, `sha2`, `image_hasher`, `reverse_geocoder`, `zip`
 - Performance: Rayon for parallel Rust processing
 
 ## Architecture
@@ -49,15 +54,18 @@ Terra is split across a React UI and a Rust command backend:
 - `src/components/` contains the gallery, sidebar, modals, review tools, analytics, and media viewer.
 - `src-tauri/src/lib.rs` exposes Tauri commands and media-processing logic.
 - `src-tauri/src/db.rs` owns SQLite schema creation, migrations, and queries.
+- `src-tauri/src/imports.rs` discovers supported media inside provider export folders or ZIP files.
+- `src-tauri/src/thumbnails.rs` owns the content-addressed thumbnail cache.
 
 The local data flow is:
 
-1. The user selects media through **Upload Photos**.
-2. Rust copies files into the managed Terra library, defaulting to `~/Pictures/Terra`.
-3. Files are organized by year/month based on extracted date metadata.
-4. Terra extracts EXIF, filename, filesystem, hash, location, screenshot, and size metadata where available.
-5. SQLite stores the indexed metadata.
-6. React reads through Tauri commands and renders gallery/review/analytics views.
+1. The user selects media through **Upload Photos** or chooses a provider export from **Cloud Import**.
+2. Rust discovers supported media, extracting ZIP exports into a temporary Terra staging folder when needed.
+3. Rust copies files into the managed Terra library, defaulting to `~/Pictures/Terra`.
+4. Files are organized by year/month based on extracted date metadata.
+5. Terra extracts EXIF, filename, filesystem, hash, location, screenshot, and size metadata where available.
+6. SQLite stores the indexed metadata and source type.
+7. React reads through Tauri commands and renders gallery/review/analytics views.
 
 ## Prerequisites
 
@@ -97,6 +105,20 @@ Supported import extensions currently include:
 - Images: `jpg`, `jpeg`, `png`, `heic`, `webp`, `gif`, `bmp`
 - Videos: `mp4`, `mov`, `avi`, `webm`, `mkv`
 
+### Import Provider Exports
+
+1. Use **Cloud Import** in the sidebar.
+2. Pick **iCloud Photos**, **Google Photos**, **Snapchat**, or **Local Export**.
+3. Follow the provider-specific download instructions in the wizard.
+4. Choose the downloaded folder or ZIP archive.
+5. Terra imports supported media, skips duplicate content hashes, and reports imported, duplicate, unsupported, and failed counts.
+
+Provider notes:
+
+- Apple Photos/iCloud: Terra supports local export folders, iCloud download folders, and ZIPs. There is no public full-library iCloud Photos OAuth import in this implementation.
+- Google Photos: use Google Takeout for full-library imports. Google Photos Picker can be considered later for selected-item imports.
+- Snapchat: use Snapchat My Data exports. Terra imports local archive media; deeper Memories metadata reconciliation is still future work.
+
 ### Change Library Location
 
 1. Open **Settings** from the sidebar.
@@ -134,6 +156,8 @@ terra/
 │   ├── src/
 │   │   ├── lib.rs          # Tauri commands and media processing
 │   │   ├── db.rs           # SQLite schema and queries
+│   │   ├── imports.rs      # Provider export folder/ZIP discovery
+│   │   ├── thumbnails.rs   # Thumbnail cache generation
 │   │   └── main.rs         # Desktop entry point
 │   ├── Cargo.toml          # Rust dependencies
 │   └── tauri.conf.json     # Tauri configuration
@@ -178,22 +202,24 @@ cargo check           # backend type/lint check
 
 ## Known Limitations
 
-- The gallery is not virtualized yet; very large libraries can create too many DOM nodes.
-- Terra displays original local media files rather than a generated thumbnail cache.
+- Large-library validation is still pending even though gallery rendering is virtualized.
+- Cursor pagination is behind a feature flag; the default app still loads the full library into frontend state.
+- Video thumbnails are not generated yet.
 - Similar-duplicate detection uses pairwise perceptual hash comparison and may need indexing for very large libraries.
 - HEIC support depends on available image decoding support in the Rust image stack.
-- Cloud/social import buttons are placeholders; no Google, iCloud, Dropbox, or Snapchat import flow is implemented yet.
+- Provider imports are export-based. Terra does not scrape iCloud/Snapchat or offer full-library provider sign-in import where no supported public API exists.
+- Google Takeout, Apple/iCloud exports, and Snapchat archives currently import media files; provider sidecar metadata reconciliation is still limited.
 - The Tauri asset scope is intentionally broad for local-library development and should be tightened before broader distribution.
 
 ## Roadmap
 
 See `docs/ROADMAP.md` for the next planned sequence:
 
-1. Thumbnail generation plus virtualized gallery rendering.
-2. Generic import job system.
-3. Google Photos Takeout folder/ZIP import.
-4. Apple Photos/iCloud import path.
-5. Snapchat/social archive import path.
+1. Finish scale work: cursor pagination rollout, video thumbnails, and large-library validation.
+2. Persist import job history and per-item errors.
+3. Deepen Google Takeout sidecar metadata and album/folder reconciliation.
+4. Explore Apple Photos automation or PhotoKit-assisted import helpers.
+5. Deepen Snapchat/social archive metadata handling.
 
 ## License
 

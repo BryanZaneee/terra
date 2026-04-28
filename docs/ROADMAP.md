@@ -2,15 +2,21 @@
 
 This roadmap captures the next planned sequence after the current local-library foundation. It is intentionally high level; each item should receive its own implementation plan before coding begins.
 
-## 1. Thumbnail Generation and Virtualized Gallery Rendering
+## 1. Scale: Thumbnails, Virtualization, and Pagination
 
 Goal: make large libraries feel fast and predictable.
 
-- Generate local thumbnails for imported photos and videos.
-- Store thumbnail paths or cache keys in SQLite.
-- Use thumbnails in gallery cards and preserve originals for modal/full-size viewing.
-- Add virtualized rendering so large views do not create thousands of DOM nodes at once.
-- Keep grouping behavior for years, months, albums, tags, and smart collections.
+Current v1:
+
+- Generated photo thumbnails and content-addressed cache paths exist.
+- Gallery rendering uses `react-virtuoso`.
+- Cursor pagination backend and a feature-flagged All Photos frontend path exist.
+
+Next:
+
+- Generate thumbnails for videos.
+- Finish cursor pagination for filtered views, albums, tags, search, and smart collections.
+- Validate performance with a real 50k-100k item library.
 
 Success criteria:
 
@@ -22,10 +28,16 @@ Success criteria:
 
 Goal: create one durable pipeline that all cloud/social import sources can use.
 
-- Add import jobs with source type, status, progress, counts, errors, and timestamps.
+Current v1:
+
+- Provider import summaries include source, discovered, imported, duplicate, unsupported, and failed counts.
+- Provider imports reuse metadata extraction, hashing, dedupe, and managed-library copy behavior.
+- Provider import progress emits through Tauri events.
+
+Next:
+
+- Add persisted import jobs with status, progress, errors, timestamps, and per-item records.
 - Support dry-run/preflight summaries before copying files.
-- Reuse existing metadata extraction, hashing, dedupe, and managed-library copy behavior.
-- Expose progress to the frontend through Tauri events.
 - Show active and completed import jobs in the UI.
 
 Success criteria:
@@ -38,10 +50,16 @@ Success criteria:
 
 Goal: provide the first practical cloud-migration path without requiring OAuth.
 
+Current v1:
+
 - Import from a Google Takeout folder or ZIP export.
+- Route copied media through the shared provider export importer.
+- Report imported, duplicate, unsupported, and failed counts.
+
+Next:
+
 - Detect media files and associated JSON sidecar metadata.
 - Preserve meaningful dates, album/folder context, filenames, and source attribution where available.
-- Route all copied media through the generic import job system.
 
 Success criteria:
 
@@ -53,10 +71,16 @@ Success criteria:
 
 Goal: help users bring Apple Photos/iCloud libraries into Terra while respecting local-first constraints.
 
-- Prefer local imports from Photos.app exports or local iCloud Photos folders before considering any network flow.
-- Support user-selected export folders with original media and metadata sidecars when available.
-- Investigate whether AppleScript or macOS Photos automation can provide a safe optional helper flow.
-- Reuse the generic import job system.
+Current v1:
+
+- Support user-selected Apple/iCloud export folders and ZIP archives.
+- Give official Apple download links in the import wizard.
+- Avoid brittle or unofficial iCloud scraping.
+
+Next:
+
+- Support Apple export sidecars where available.
+- Investigate whether AppleScript, PhotoKit, or macOS Photos automation can provide a safe optional helper flow.
 
 Success criteria:
 
@@ -68,10 +92,16 @@ Success criteria:
 
 Goal: handle social-media archive exports after the general importer is proven.
 
+Current v1:
+
 - Start with local archive folders or ZIP files.
-- Identify media directories and metadata files for each supported source.
-- Preserve source attribution and best-effort capture dates.
-- Reuse the generic import job system and reporting.
+- Import supported media from Snapchat exports through the shared provider importer.
+- Report imported, duplicate, unsupported, and failed counts.
+
+Next:
+
+- Identify source-specific media directories and metadata files for Snapchat and later social archives.
+- Preserve source attribution and best-effort capture dates from archive metadata.
 
 Success criteria:
 

@@ -18,6 +18,8 @@ This document records the current implementation state. The next feature sequenc
 ### Managed Local Library
 
 - **Upload Photos** copies selected media into the Terra managed library.
+- **Cloud Import** opens a provider import wizard for Apple Photos/iCloud, Google Photos, Snapchat, and generic local exports.
+- Provider exports can be imported from local folders or ZIP archives.
 - Default library path is `~/Pictures/Terra`.
 - Users can change the library storage path from Settings.
 - New imports are organized into year/month folders based on date metadata.
@@ -39,6 +41,8 @@ This document records the current implementation state. The next feature sequenc
 - Albums can be created and populated from selected photos.
 - Tags can be created, bulk-applied, searched, assigned, and removed per photo.
 - Sidebar search queries filename and location.
+- Gallery rendering uses `react-virtuoso` to avoid mounting every row at once.
+- A feature-flagged cursor-pagination path exists for All Photos, with the legacy full-library load still default.
 
 ### Cleanup and Review
 
@@ -56,6 +60,14 @@ This document records the current implementation state. The next feature sequenc
 - File-size population can be run as a one-time scan.
 - Storage Analytics shows total size, photo/video/screenshot totals, storage by year/month, largest files, and estimated duplicate savings.
 
+### Provider Export Imports
+
+- `ImportWizard` gives provider-specific guidance and official download links.
+- `import_provider_export` imports supported media from provider export folders or ZIP archives.
+- `src-tauri/src/imports.rs` stages ZIP contents under Terra app data, ignores common sidecar files, and reports unsupported files.
+- Imported provider media reuses the managed-library copy, hash dedupe, screenshot detection, file-size, and SQLite indexing path.
+- Import summaries report discovered, imported, skipped duplicate, unsupported, and failed counts.
+
 ## Architecture Notes
 
 - Frontend composition starts in `src/App.jsx`.
@@ -64,42 +76,45 @@ This document records the current implementation state. The next feature sequenc
 - `src/components/` owns gallery, modal, cleanup, review, tag, and analytics UI.
 - `src-tauri/src/lib.rs` owns Tauri command handlers and media-processing helpers.
 - `src-tauri/src/db.rs` owns schema setup, lightweight migrations, and SQLite queries.
+- `src-tauri/src/imports.rs` owns provider export folder/ZIP discovery.
+- `src-tauri/src/thumbnails.rs` owns thumbnail cache paths and generation.
 
 The main data path is:
 
 1. React opens a file picker through the Tauri dialog plugin.
-2. `upload_photos` copies selected files into the managed library.
-3. Rust extracts metadata and inserts or updates the SQLite row.
-4. React reloads database-backed media via Tauri commands.
-5. Gallery, cleanup, review, and analytics views query the same metadata store.
+2. `upload_photos` or `import_provider_export` discovers supported media.
+3. Rust copies selected files into the managed library.
+4. Rust extracts metadata and inserts or updates the SQLite row.
+5. React reloads database-backed media via Tauri commands.
+6. Gallery, cleanup, review, and analytics views query the same metadata store.
 
 ## Known Limitations
 
-- The gallery is not virtualized. Current rendering still creates DOM nodes for every visible group item.
-- There is no generated thumbnail cache. The UI displays original local media files through Tauri asset URLs.
+- Cursor pagination is feature-flagged and only wired for the All Photos path so far.
+- Video thumbnails are not generated yet.
 - Similar duplicate grouping compares perceptual hashes pairwise, which may not scale well to very large libraries.
 - Video dimensions are not extracted yet; videos currently store `0x0` dimensions.
 - HEIC import is accepted by extension, but metadata and image processing depend on decoder support.
-- Cloud/social import buttons are placeholders. There is no Google Photos, Apple Photos/iCloud, Dropbox/Drive, or Snapchat archive importer yet.
-- Documentation now reflects current functionality, but deeper implementation plans for the next roadmap items are still pending.
+- Provider imports are local export based. Terra does not offer full-library sign-in imports where providers do not expose a supported public API.
+- Google Takeout, Apple/iCloud, and Snapchat imports currently ingest media files; source-specific sidecar metadata reconciliation remains future work.
 
 ## Verification Snapshot
 
 Latest known checks after installing dependencies:
 
-- `npm run test:run`: 103 tests passed.
-- `npm run build`: passed, with a large bundle warning around the main JavaScript chunk.
-- `cargo test`: 48 tests passed, with only unused-function warnings.
+- `npm run test:run`: 161 tests passed.
+- `cargo test`: 68 Rust tests passed, with only unused-function warnings.
+- `npm run build`: passed.
 - `npm audit`: reported dependency vulnerabilities that should be evaluated separately.
 
 ## Next Engineering Frontier
 
-The next development phase should focus on scale and imports:
+The next development phase should deepen the work that now has a v1 foundation:
 
-1. Thumbnail generation plus virtualized gallery rendering.
-2. Generic import job system.
-3. Google Photos Takeout folder/ZIP import.
-4. Apple Photos/iCloud import path.
-5. Snapchat/social archive import path.
+1. Cursor pagination rollout across all views and large-library validation.
+2. Persisted import job history with preflight/dry-run summaries and per-item errors.
+3. Google Takeout JSON sidecar and album/folder reconciliation.
+4. Apple Photos automation or PhotoKit-assisted import helpers.
+5. Snapchat/social archive metadata mapping.
 
 See `docs/ROADMAP.md` for the high-level sequence.

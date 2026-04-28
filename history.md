@@ -80,6 +80,13 @@ duplicate/review flows still use legacy one-shot fetches. Keeping pagination
 off by default prevents partially migrated filtering from changing normal app
 behavior while the backend query surface grows.
 
+### 2026-04-28 — Docs refreshed after import and scale work
+
+**What:** Updated README, ROADMAP, IMPLEMENTATION_PLAN, and POLISH_PLAN to stop
+describing thumbnails, virtualization, and cloud/social imports as placeholders.
+Docs now distinguish shipped v1 folder/ZIP provider import from future persisted
+jobs, direct provider APIs, and source-specific sidecar metadata handling.
+
 ---
 
 ## Active Effort: Polish to iOS / Google Photos Parity (started 2026-04-27)
