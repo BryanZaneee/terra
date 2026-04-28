@@ -86,6 +86,8 @@ behavior while the backend query surface grows.
 describing thumbnails, virtualization, and cloud/social imports as placeholders.
 Docs now distinguish shipped v1 folder/ZIP provider import from future persisted
 jobs, direct provider APIs, and source-specific sidecar metadata handling.
+Verification snapshot was refreshed after final checks: 165 frontend tests,
+74 Rust tests, and a passing production frontend build.
 
 ---
 

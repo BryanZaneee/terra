@@ -102,8 +102,8 @@ The main data path is:
 
 Latest known checks after installing dependencies:
 
-- `npm run test:run`: 161 tests passed.
-- `cargo test`: 68 Rust tests passed, with only unused-function warnings.
+- `npm run test:run`: 165 tests passed.
+- `cargo test`: 74 Rust tests passed, with only unused-function warnings.
 - `npm run build`: passed.
 - `npm audit`: reported dependency vulnerabilities that should be evaluated separately.
 
