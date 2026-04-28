@@ -200,12 +200,6 @@ pub struct ViewCounts {
     pub by_smart_collection: HashMap<String, i64>,
 }
 
-/// COMMAND: Get all photos from the database
-#[tauri::command]
-fn get_all_photos() -> Result<Vec<PhotoMetadata>, String> {
-    with_db("Failed to get photos", |c| db::get_all_photos(c))
-}
-
 #[tauri::command]
 fn scan_directory(dir_path: String, save_to_db: bool) -> Result<Vec<PhotoMetadata>, String> {
     info!("Scanning directory: {}", dir_path);
@@ -580,11 +574,6 @@ fn remove_from_album(album_id: i64, photo_paths: Vec<String>) -> Result<(), Stri
 }
 
 #[tauri::command]
-fn get_album_photos(album_id: i64) -> Result<Vec<PhotoMetadata>, String> {
-    with_db("Failed to get album photos", |c| db::get_album_photos(c, album_id))
-}
-
-#[tauri::command]
 fn set_album_cover(album_id: i64, photo_path: String) -> Result<(), String> {
     with_db("Failed to set album cover", |c| db::set_album_cover(c, album_id, &photo_path))
 }
@@ -638,11 +627,6 @@ fn delete_photos(paths: Vec<String>) -> Result<(), String> {
 #[tauri::command]
 fn get_duplicates() -> Result<Vec<PhotoMetadata>, String> {
     with_db("Failed to get duplicates", |c| db::get_duplicates(c))
-}
-
-#[tauri::command]
-fn search_photos(query: String) -> Result<Vec<PhotoMetadata>, String> {
-    with_db("Failed to search photos", |c| db::search_photos(c, &query))
 }
 
 #[tauri::command]
@@ -1209,12 +1193,6 @@ fn get_smart_collections() -> Result<Vec<db::SmartCollection>, String> {
     with_db("Failed to get smart collections", |c| db::get_smart_collections(c))
 }
 
-/// COMMAND: Get photos for a smart collection
-#[tauri::command]
-fn get_smart_collection_photos(collection_id: String) -> Result<Vec<PhotoMetadata>, String> {
-    with_db("Failed to get collection photos", |c| db::get_smart_collection_photos(c, &collection_id))
-}
-
 // ============================================================================
 // Storage Analytics Commands
 // ============================================================================
@@ -1459,7 +1437,6 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             scan_directory,
-            get_all_photos,
             upload_photos,
             import_provider_export,
             toggle_favorite,
@@ -1468,11 +1445,9 @@ pub fn run() {
             get_albums,
             add_to_album,
             remove_from_album,
-            get_album_photos,
             set_album_cover,
             delete_photos,
             get_duplicates,
-            search_photos,
             get_locations,
             // Duplicate and screenshot detection
             scan_for_duplicates,
@@ -1505,7 +1480,6 @@ pub fn run() {
             get_setting_command,
             // Smart Collections
             get_smart_collections,
-            get_smart_collection_photos,
             // Storage Analytics
             get_storage_analytics,
             populate_file_sizes,

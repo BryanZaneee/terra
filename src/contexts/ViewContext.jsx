@@ -3,7 +3,6 @@ import { invoke } from '@tauri-apps/api/core';
 import { processPhotos } from '../utils/photoHelpers';
 import { groupPhotosBy } from '../utils/groupPhotos';
 import { filterForViewMode, filterKey } from '../utils/viewFilter';
-import { CONFIG } from '../config';
 import { useAppContext } from './AppContext';
 
 const ViewContext = createContext(null);
@@ -25,14 +24,13 @@ export function ViewProvider({ children }) {
   const [unreviewedCount, setUnreviewedCount] = useState(0);
 
   const searchDebounceRef = useRef(null);
-  const wasFilteredViewRef = useRef(false);
   const prevGroupKeysRef = useRef('');
   const isMountedRef = useRef(true);
-  // Stable key of the last server-side filter requested in paginated mode.
-  // Pure-presentation switches (all → year → month → locations) all map to
-  // the same key and skip the round-trip; album:5 → album:6 changes the key
-  // and triggers a reload.
+  // Stable key of the last server-side filter we requested. Pure-presentation
+  // switches (all → year → month → locations) all map to the same key and
+  // skip the round-trip; album:5 → album:6 changes the key and reloads.
   const lastFilterKeyRef = useRef(filterKey({ kind: 'all' }));
+
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -66,37 +64,18 @@ export function ViewProvider({ children }) {
     if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
 
     if (!query.trim()) {
-      // Empty query → bail out of search view and reload the previous slice.
-      // In paginated mode this resets the cursor walk; in legacy mode it
-      // refetches the whole library.
-      if (CONFIG.USE_PAGINATION) {
-        setViewMode('all');
-      } else {
-        loadPhotosFromDatabase();
-      }
+      // Empty query → drop back to All; the effect below detects the filter
+      // change and resets the cursor walk.
+      setViewMode('all');
       return;
     }
 
     searchDebounceRef.current = setTimeout(async () => {
       if (!isMountedRef.current) return;
-      if (CONFIG.USE_PAGINATION) {
-        const filter = { kind: 'search', query: query.trim() };
-        lastFilterKeyRef.current = filterKey(filter);
-        setViewMode('search');
-        await loadPhotosFromDatabase(filter);
-        return;
-      }
-      setLoading(true);
-      try {
-        const result = await invoke('search_photos', { query });
-        if (!isMountedRef.current) return;
-        setPhotos(processPhotos(result));
-        setViewMode('search');
-      } catch (err) {
-        console.error('Search failed:', err);
-      } finally {
-        if (isMountedRef.current) setLoading(false);
-      }
+      const filter = { kind: 'search', query: query.trim() };
+      lastFilterKeyRef.current = filterKey(filter);
+      setViewMode('search');
+      await loadPhotosFromDatabase(filter);
     }, 300);
   };
 
@@ -110,65 +89,41 @@ export function ViewProvider({ children }) {
     [groupedPhotos],
   );
 
-  // Load photos for the current view. Single effect keyed on viewMode +
-  // selectedTagIds replaces what used to be four near-identical effects.
+  // Load photos for the current view. Most views resolve to a server-side
+  // ViewFilter that the paged loader handles; the only exceptions are:
+  //  - multi-tag (AND/OR semantics that don't fit the cursor design),
+  //  - duplicates and search, which are populated by their own flows
+  //    (search via handleSearch above; duplicates via the scan modal).
   useEffect(() => {
     const load = async () => {
       try {
-        // Paginated path: derive a server-side ViewFilter and reload only
-        // when the filter key actually changes. Pure regrouping
-        // (all → year → month → locations all map to the same key) skips
-        // the round-trip; switching album:5 → album:6 changes the key and
-        // triggers a reload. 'search' is driven by handleSearch, not here,
-        // so we ignore that viewMode here to avoid double-fetching on
-        // every keystroke.
-        if (CONFIG.USE_PAGINATION && viewMode !== 'search') {
-          const filter = filterForViewMode(viewMode, { selectedTagIds });
-          if (filter) {
-            wasFilteredViewRef.current = false;
-            const key = filterKey(filter);
-            if (key !== lastFilterKeyRef.current) {
-              lastFilterKeyRef.current = key;
-              await loadPhotosFromDatabase(filter);
-            }
-            return;
-          }
-          // Multi-tag selections, duplicates, or other unmigrated views
-          // still bypass — fall through to the legacy direct-fetch branches.
-          // Reset the key so the next paginated viewMode is treated as a
-          // fresh filter and triggers a reload.
-          lastFilterKeyRef.current = null;
+        if (viewMode === 'search' || viewMode === 'duplicates') {
+          // Photos here come from handleSearch / the duplicate scan; no
+          // load to perform from this effect.
+          return;
         }
 
-        if (viewMode.startsWith('album:')) {
-          wasFilteredViewRef.current = true;
-          setLoading(true);
-          const albumId = parseInt(viewMode.split(':')[1]);
-          const result = await invoke('get_album_photos', { albumId });
-          setPhotos(processPhotos(result));
-        } else if (viewMode.startsWith('collection:')) {
-          wasFilteredViewRef.current = true;
-          setLoading(true);
-          const collectionId = viewMode.split(':')[1];
-          const result = await invoke('get_smart_collection_photos', { collectionId });
-          setPhotos(processPhotos(result));
-        } else if (viewMode === 'tags') {
-          wasFilteredViewRef.current = true;
-          if (selectedTagIds.length > 0) {
-            setLoading(true);
-            const result = await invoke('get_photos_by_tags', {
-              tagIds: selectedTagIds,
-              matchAll: false,
-            });
-            setPhotos(processPhotos(result));
+        const filter = filterForViewMode(viewMode, { selectedTagIds });
+        if (filter) {
+          const key = filterKey(filter);
+          if (key !== lastFilterKeyRef.current) {
+            lastFilterKeyRef.current = key;
+            await loadPhotosFromDatabase(filter);
           }
-        } else if (viewMode === 'duplicates' || viewMode === 'search') {
-          // photos for these views are populated by their respective scan/search flows
-          wasFilteredViewRef.current = true;
-        } else if (REGULAR_VIEWS.includes(viewMode) && wasFilteredViewRef.current) {
-          // returning to a normal view from a filtered one — reload everything
-          wasFilteredViewRef.current = false;
-          await loadPhotosFromDatabase();
+          return;
+        }
+
+        // No paginated filter resolved → multi-tag is the only such case
+        // today. Direct-fetch with AND/OR semantics, then mark the cursor
+        // stale so the next paginated view triggers a reload.
+        lastFilterKeyRef.current = null;
+        if (viewMode === 'tags' && selectedTagIds.length > 0) {
+          setLoading(true);
+          const result = await invoke('get_photos_by_tags', {
+            tagIds: selectedTagIds,
+            matchAll: false,
+          });
+          setPhotos(processPhotos(result));
         }
       } catch (err) {
         console.error(err);

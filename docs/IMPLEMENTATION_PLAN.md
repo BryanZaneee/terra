@@ -42,7 +42,8 @@ This document records the current implementation state. The next feature sequenc
 - Tags can be created, bulk-applied, searched, assigned, and removed per photo.
 - Sidebar search queries filename and location.
 - Gallery rendering uses `react-virtuoso` to avoid mounting every row at once.
-- A feature-flagged cursor-pagination path exists for All Photos, with the legacy full-library load still default.
+- Photo loading is cursor-paginated end-to-end (`get_photos_page`); the gallery loads the first page, then `endReached` fetches subsequent pages on scroll.
+- Sidebar badges read from `get_view_counts`, refreshed after each mutation, so totals match the true library size rather than the loaded window.
 
 ### Cleanup and Review
 
@@ -79,7 +80,7 @@ This document records the current implementation state. The next feature sequenc
 - `src-tauri/src/imports.rs` owns provider export folder/ZIP discovery.
 - `src-tauri/src/thumbnails.rs` owns thumbnail cache paths and generation.
 
-The main data path is:
+The import data path is:
 
 1. React opens a file picker through the Tauri dialog plugin.
 2. `upload_photos` or `import_provider_export` discovers supported media.
@@ -88,9 +89,17 @@ The main data path is:
 5. React reloads database-backed media via Tauri commands.
 6. Gallery, cleanup, review, and analytics views query the same metadata store.
 
+The gallery display path is:
+
+1. `ViewContext` derives a `ViewFilter` from the current `viewMode` and (for tags) `selectedTagIds`; pure-presentation switches like `year` ↔ `month` ↔ `locations` reuse the `All` filter and skip the round-trip.
+2. `usePagedPhotos` calls `get_photos_page(filter, cursor=null, limit=PAGE_SIZE)` for the first page; the Rust SQL builder routes through `FilterSql` (joins + WHERE + bound params) and walks `(date_taken, id) DESC` via the `idx_date_id` composite index.
+3. `react-virtuoso`'s `endReached` fires `loadNextPage`, which sends the previous page's last `(date_taken, id)` as a cursor; the backend fetches `LIMIT n+1` to know whether further pages exist.
+4. Mutations (upload / archive / restore / delete / favorite / mark-reviewed) call `refreshCounts()` after the backend command resolves so the sidebar badges stay in sync.
+5. Multi-tag selections fall through to `get_photos_by_tags` for AND/OR semantics; everything else stays on the paginated path.
+
 ## Known Limitations
 
-- Cursor pagination is feature-flagged and only wired for the All Photos path so far.
+- Multi-tag selections (more than one tag active at once) still go through the legacy `get_photos_by_tags` AND/OR query; pagination handles single-tag views.
 - Video thumbnails are not generated yet.
 - Similar duplicate grouping compares perceptual hashes pairwise, which may not scale well to very large libraries.
 - Video dimensions are not extracted yet; videos currently store `0x0` dimensions.
@@ -102,8 +111,8 @@ The main data path is:
 
 Latest known checks after installing dependencies:
 
-- `npm run test:run`: 165 tests passed.
-- `cargo test`: 74 Rust tests passed, with only unused-function warnings.
+- `npm run test:run`: 171 tests passed.
+- `cargo test`: 78 Rust tests passed, no warnings.
 - `npm run build`: passed.
 - `npm audit`: reported dependency vulnerabilities that should be evaluated separately.
 
@@ -111,7 +120,7 @@ Latest known checks after installing dependencies:
 
 The next development phase should deepen the work that now has a v1 foundation:
 
-1. Cursor pagination rollout across all views and large-library validation.
+1. Large-library validation of cursor pagination at 50k+ photos and multi-tag pagination support.
 2. Persisted import job history with preflight/dry-run summaries and per-item errors.
 3. Google Takeout JSON sidecar and album/folder reconciliation.
 4. Apple Photos automation or PhotoKit-assisted import helpers.

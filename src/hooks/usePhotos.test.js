@@ -26,11 +26,14 @@ describe('usePhotos', () => {
     expect(invoke).toHaveBeenCalledWith('get_library_path_command');
   });
 
-  it('loadPhotosFromDatabase calls invoke and processes results', async () => {
+  it('loadPhotosFromDatabase fetches the first page and processes results', async () => {
     invoke.mockResolvedValueOnce('/library') // get_library_path_command
-      .mockResolvedValueOnce([
-        { path: '/p/1.jpg', name: '1.jpg', date_taken: 1700000000, is_favorite: false },
-      ]);
+      .mockResolvedValueOnce({
+        photos: [
+          { path: '/p/1.jpg', name: '1.jpg', date_taken: 1700000000, is_favorite: false },
+        ],
+        next_cursor: null,
+      });
 
     const { result } = renderHook(() => usePhotos());
 
@@ -38,7 +41,10 @@ describe('usePhotos', () => {
       await result.current.loadPhotosFromDatabase();
     });
 
-    expect(invoke).toHaveBeenCalledWith('get_all_photos');
+    expect(invoke).toHaveBeenCalledWith(
+      'get_photos_page',
+      expect.objectContaining({ filter: { kind: 'all' }, cursor: null }),
+    );
     expect(result.current.photos.length).toBe(1);
     expect(result.current.loading).toBe(false);
   });
@@ -56,9 +62,12 @@ describe('usePhotos', () => {
 
   it('handleToggleFavorite optimistically updates photo', async () => {
     invoke.mockResolvedValueOnce('/library') // get_library_path_command
-      .mockResolvedValueOnce([
-        { path: '/p/1.jpg', name: '1.jpg', date_taken: 1700000000, is_favorite: false },
-      ]);
+      .mockResolvedValueOnce({
+        photos: [
+          { path: '/p/1.jpg', name: '1.jpg', date_taken: 1700000000, is_favorite: false },
+        ],
+        next_cursor: null,
+      });
 
     const { result } = renderHook(() => usePhotos());
 

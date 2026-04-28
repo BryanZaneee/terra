@@ -2,7 +2,6 @@ import { useState, useCallback, useRef, lazy, Suspense } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { Copy, MonitorSmartphone } from 'lucide-react';
 
-import { CONFIG } from './config';
 import { filterForViewMode } from './utils/viewFilter';
 import ErrorBoundary from './components/ErrorBoundary';
 import DitherBackground from './components/DitherBackground';
@@ -198,14 +197,11 @@ const AppLayout = () => {
           onPhotoClick={onPhotoClick}
           onToggleSelection={onToggleSelection}
           uploadStatus={uploadStatus}
-          // Infinite scroll fires only when the current view actually
-          // resolves to a server-side filter — multi-tag selections,
-          // duplicates, and an empty search all return null below and stay
-          // on the legacy single-shot fetch. Passing `undefined` keeps
-          // Virtuoso silent for those.
+          // Infinite scroll fires only on views that resolve to a
+          // server-side filter — multi-tag, duplicates, and an empty search
+          // return null and stay silent.
           onEndReached={
-            CONFIG.USE_PAGINATION
-            && filterForViewMode(viewMode, { selectedTagIds, searchQuery }) != null
+            filterForViewMode(viewMode, { selectedTagIds, searchQuery }) != null
               ? loadNextPage
               : undefined
           }

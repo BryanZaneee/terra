@@ -1,7 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
-import { processPhotos } from '../utils/photoHelpers';
 import { CONFIG } from '../config';
 import { usePagedPhotos } from './usePagedPhotos';
 
@@ -16,9 +15,7 @@ export function usePhotos({ refreshCounts } = {}) {
   const isMountedRef = useRef(true);
 
   // Pagination owns the cursor + per-page loading flag; setPhotos/setLoading
-  // here remain the single source of truth for the photos list. When
-  // CONFIG.USE_PAGINATION is off, the paged hook is dormant — its callbacks
-  // are never invoked.
+  // here remain the single source of truth for the photos list.
   const paged = usePagedPhotos({ setPhotos, setLoading, setError });
 
   const setStatusWithTimeout = useCallback((message, duration = CONFIG.STATUS_TIMEOUT_MS) => {
@@ -43,28 +40,12 @@ export function usePhotos({ refreshCounts } = {}) {
     };
   }, []);
 
+  // `filter === undefined` means "reuse the last filter" — what the cleanup
+  // hook needs after archive/delete so the user stays on their current view
+  // (e.g. Favorites) instead of snapping back to All.
   const loadPhotosFromDatabase = useCallback(async (filter) => {
     if (!isMountedRef.current) return;
-    if (CONFIG.USE_PAGINATION) {
-      // `filter === undefined` means "reuse the last filter" — exactly what
-      // the cleanup hook needs after archive/delete so the user stays on
-      // their current view (e.g. Favorites) instead of snapping back to All.
-      // P.3: built-in views pass a ViewFilter; album/tag/search/smart
-      // collections still bypass this until P.4.
-      await paged.loadFirstPage(filter);
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    try {
-      const result = await invoke('get_all_photos');
-      if (!isMountedRef.current) return;
-      setPhotos(processPhotos(result));
-    } catch {
-      // Database may be empty on first run
-    } finally {
-      if (isMountedRef.current) setLoading(false);
-    }
+    await paged.loadFirstPage(filter);
   }, [paged.loadFirstPage]);
 
   const handleUploadPhotos = useCallback(async () => {
@@ -148,9 +129,8 @@ export function usePhotos({ refreshCounts } = {}) {
     handleUploadPhotos,
     handleToggleFavorite,
     handleDeleteSelected,
-    // Pagination surface — meaningful only when CONFIG.USE_PAGINATION is on
-    // and the active view is one the paged hook knows how to filter (All,
-    // for now). PhotoGrid wires `loadNextPage` to `endReached`.
+    // Pagination surface. PhotoGrid wires `loadNextPage` to `endReached` for
+    // any view that resolves to a server-side filter.
     loadNextPage: paged.loadNextPage,
     hasMore: paged.hasMore,
     loadingPage: paged.loadingPage,

@@ -1,5 +1,4 @@
 use rusqlite::{Connection, Result as SqlResult, params};
-use std::collections::HashMap;
 use std::path::PathBuf;
 use dirs;
 use crate::{Cursor, PageResult, PhotoMetadata, ViewCounts, ViewFilter};
@@ -331,29 +330,10 @@ pub fn get_all_photos(conn: &Connection) -> SqlResult<Vec<PhotoMetadata>> {
     rows.collect()
 }
 
-/// Check if a photo already exists in the database
-pub fn photo_exists(conn: &Connection, path: &str) -> SqlResult<bool> {
-    let mut stmt = conn.prepare("SELECT COUNT(*) FROM photos WHERE path = ?1")?;
-    let count: i64 = stmt.query_row(params![path], |row| row.get(0))?;
-    Ok(count > 0)
-}
-
 /// Delete a photo from the database
 pub fn delete_photo(conn: &Connection, path: &str) -> SqlResult<()> {
     conn.execute("DELETE FROM photos WHERE path = ?1", params![path])?;
     Ok(())
-}
-
-/// Get photo count by year
-pub fn get_photo_count_by_year(conn: &Connection) -> SqlResult<Vec<(String, i64)>> {
-    let mut stmt = conn.prepare(
-        "SELECT strftime('%Y', date_taken, 'unixepoch') as year, COUNT(*) as count
-         FROM photos
-         GROUP BY year
-         ORDER BY year DESC"
-    )?;
-    let rows = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))?;
-    rows.collect()
 }
 
 /// Set photo favorite status
@@ -424,22 +404,6 @@ pub fn get_albums(conn: &Connection) -> SqlResult<Vec<Album>> {
     rows.collect()
 }
 
-/// Get all photos in an album
-pub fn get_album_photos(conn: &Connection, album_id: i64) -> SqlResult<Vec<PhotoMetadata>> {
-    let mut stmt = conn.prepare(
-        "SELECT p.path, p.name, p.date_taken, p.width, p.height, p.is_favorite, p.content_hash, \
-         p.latitude, p.longitude, p.location_name, \
-         p.camera_make, p.camera_model, p.lens_model, p.iso, p.aperture, p.shutter_us, \
-         p.focal_length_mm, p.orientation, p.duration_ms, p.codec, p.thumb_status \
-         FROM photos p \
-         JOIN album_photos ap ON p.path = ap.photo_path \
-         WHERE ap.album_id = ?1 \
-         ORDER BY p.date_taken DESC"
-    )?;
-    let rows = stmt.query_map(params![album_id], photo_from_row)?;
-    rows.collect()
-}
-
 /// Set album cover photo
 pub fn set_album_cover(conn: &Connection, album_id: i64, photo_path: &str) -> SqlResult<()> {
     conn.execute(
@@ -461,18 +425,6 @@ pub fn get_duplicates(conn: &Connection) -> SqlResult<Vec<PhotoMetadata>> {
     );
     let mut stmt = conn.prepare(&query)?;
     let rows = stmt.query_map([], photo_from_row)?;
-    rows.collect()
-}
-
-/// Search photos by text (name or location)
-pub fn search_photos(conn: &Connection, query: &str) -> SqlResult<Vec<PhotoMetadata>> {
-    let search_term = format!("%{}%", query);
-    let sql = format!(
-        "SELECT {} FROM photos WHERE name LIKE ?1 OR location_name LIKE ?1 ORDER BY date_taken DESC",
-        PHOTO_COLUMNS
-    );
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(params![search_term], photo_from_row)?;
     rows.collect()
 }
 
@@ -600,20 +552,6 @@ pub fn get_old_archived_photos(conn: &Connection, days: i64) -> SqlResult<Vec<St
 pub fn permanently_delete_photo(conn: &Connection, path: &str) -> SqlResult<()> {
     conn.execute("DELETE FROM photos WHERE path = ?1", params![path])?;
     Ok(())
-}
-
-/// Get total photo count (non-archived)
-pub fn get_photo_count(conn: &Connection) -> SqlResult<i64> {
-    let mut stmt = conn.prepare("SELECT COUNT(*) FROM photos WHERE archived_at IS NULL")?;
-    let count: i64 = stmt.query_row([], |row| row.get(0))?;
-    Ok(count)
-}
-
-/// Get count of photos with dhash computed
-pub fn get_photos_with_dhash_count(conn: &Connection) -> SqlResult<i64> {
-    let mut stmt = conn.prepare("SELECT COUNT(*) FROM photos WHERE dhash_64 IS NOT NULL AND archived_at IS NULL")?;
-    let count: i64 = stmt.query_row([], |row| row.get(0))?;
-    Ok(count)
 }
 
 // ============================================================================
@@ -996,50 +934,6 @@ pub fn get_smart_collections(conn: &Connection) -> SqlResult<Vec<SmartCollection
     Ok(collections)
 }
 
-/// Get photos for a specific smart collection
-pub fn get_smart_collection_photos(conn: &Connection, collection_id: &str) -> SqlResult<Vec<PhotoMetadata>> {
-    let now = chrono::Utc::now().timestamp();
-    let seven_days_ago = now - (7 * 24 * 60 * 60);
-    let thirty_days_ago = now - (30 * 24 * 60 * 60);
-    let current_year = chrono::Utc::now().format("%Y").to_string();
-    let cols = PHOTO_COLUMNS;
-
-    // Time-based queries require bound parameters; handle before the static match.
-    if collection_id == "time_7days" {
-        let sql = format!("SELECT {} FROM photos WHERE date_taken > ?1 AND archived_at IS NULL ORDER BY date_taken DESC", cols);
-        let mut stmt = conn.prepare(&sql)?;
-        return query_photos(&mut stmt, params![seven_days_ago]);
-    } else if collection_id == "time_30days" {
-        let sql = format!("SELECT {} FROM photos WHERE date_taken > ?1 AND archived_at IS NULL ORDER BY date_taken DESC", cols);
-        let mut stmt = conn.prepare(&sql)?;
-        return query_photos(&mut stmt, params![thirty_days_ago]);
-    } else if collection_id == "time_year" {
-        let sql = format!("SELECT {} FROM photos WHERE strftime('%Y', date_taken, 'unixepoch') = ?1 AND archived_at IS NULL ORDER BY date_taken DESC", cols);
-        let mut stmt = conn.prepare(&sql)?;
-        return query_photos(&mut stmt, params![current_year]);
-    }
-
-    let where_clause = match collection_id {
-        "size_large"       => "file_size > 5242880 AND archived_at IS NULL ORDER BY file_size DESC",
-        "size_medium"      => "file_size BETWEEN 1048576 AND 5242880 AND archived_at IS NULL ORDER BY file_size DESC",
-        "size_small"       => "file_size < 1048576 AND file_size > 0 AND archived_at IS NULL ORDER BY file_size DESC",
-        "dim_4k"           => "(width >= 3840 OR height >= 2160) AND archived_at IS NULL ORDER BY date_taken DESC",
-        "dim_hd"           => "(width >= 1920 OR height >= 1080) AND width < 3840 AND height < 2160 AND archived_at IS NULL ORDER BY date_taken DESC",
-        "dim_portrait"     => "height > width AND width > 0 AND archived_at IS NULL ORDER BY date_taken DESC",
-        "dim_landscape"    => "width > height AND height > 0 AND archived_at IS NULL ORDER BY date_taken DESC",
-        "status_unreviewed" => "reviewed_at IS NULL AND archived_at IS NULL ORDER BY date_taken DESC",
-        _ => return Ok(Vec::new()),
-    };
-
-    let sql = format!("SELECT {} FROM photos WHERE {}", cols, where_clause);
-    let mut stmt = conn.prepare(&sql)?;
-    query_photos(&mut stmt, [])
-}
-
-fn query_photos<P: rusqlite::Params>(stmt: &mut rusqlite::Statement, params: P) -> SqlResult<Vec<PhotoMetadata>> {
-    stmt.query_map(params, photo_from_row)?.collect()
-}
-
 // ============================================================================
 // Storage Analytics Functions
 // ============================================================================
@@ -1388,13 +1282,10 @@ fn build_filter_sql(filter: &ViewFilter) -> FilterSql {
     }
 }
 
-/// Map a smart-collection id to a `FilterSql`. The legacy
-/// `get_smart_collection_photos` orders size buckets by `file_size DESC`, but
-/// the cursor schema requires `(date_taken, id)`, so the paginated path
-/// uniformly orders by `date_taken DESC` — UX tradeoff: large/medium/small
-/// buckets are still scoped by size, but rows inside each bucket appear
-/// chronologically rather than biggest-first. Acceptable until the cursor
-/// design is extended to per-filter sort dimensions.
+/// Map a smart-collection id to a `FilterSql`. Size buckets are scoped by
+/// `file_size` thresholds but ordered by `date_taken DESC` so the
+/// `(date_taken, id)` cursor stays valid; rows inside each bucket appear
+/// chronologically rather than biggest-first.
 fn smart_collection_filter_sql(id: &str) -> FilterSql {
     let now = chrono::Utc::now().timestamp();
     let seven_days_ago = now - 7 * 24 * 60 * 60;
@@ -1631,62 +1522,14 @@ mod tests {
     }
 
     #[test]
-    fn test_photo_exists_true_for_inserted() {
-        let conn = setup_db();
-        let photo = test_photo("/photos/exists.jpg", "exists.jpg");
-        insert_photo(&conn, &photo, "upload").unwrap();
-
-        assert!(photo_exists(&conn, "/photos/exists.jpg").unwrap());
-    }
-
-    #[test]
-    fn test_photo_exists_false_for_missing() {
-        let conn = setup_db();
-        assert!(!photo_exists(&conn, "/photos/missing.jpg").unwrap());
-    }
-
-    #[test]
     fn test_delete_photo() {
         let conn = setup_db();
         let photo = test_photo("/photos/delete_me.jpg", "delete_me.jpg");
         insert_photo(&conn, &photo, "upload").unwrap();
-        assert!(photo_exists(&conn, "/photos/delete_me.jpg").unwrap());
+        assert_eq!(get_all_photos(&conn).unwrap().len(), 1);
 
         delete_photo(&conn, "/photos/delete_me.jpg").unwrap();
-        assert!(!photo_exists(&conn, "/photos/delete_me.jpg").unwrap());
-    }
-
-    #[test]
-    fn test_search_photos_by_name() {
-        let conn = setup_db();
-        let photo = test_photo("/photos/sunset_beach.jpg", "sunset_beach.jpg");
-        insert_photo(&conn, &photo, "upload").unwrap();
-
-        let results = search_photos(&conn, "sunset").unwrap();
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].name, "sunset_beach.jpg");
-    }
-
-    #[test]
-    fn test_search_photos_by_location() {
-        let conn = setup_db();
-        let mut photo = test_photo("/photos/trip.jpg", "trip.jpg");
-        photo.location_name = Some("San Francisco, California".to_string());
-        insert_photo(&conn, &photo, "upload").unwrap();
-
-        let results = search_photos(&conn, "San Francisco").unwrap();
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].location_name.as_deref(), Some("San Francisco, California"));
-    }
-
-    #[test]
-    fn test_get_photo_count() {
-        let conn = setup_db();
-        assert_eq!(get_photo_count(&conn).unwrap(), 0);
-
-        insert_photo(&conn, &test_photo("/photos/a.jpg", "a.jpg"), "upload").unwrap();
-        insert_photo(&conn, &test_photo("/photos/b.jpg", "b.jpg"), "upload").unwrap();
-        assert_eq!(get_photo_count(&conn).unwrap(), 2);
+        assert_eq!(get_all_photos(&conn).unwrap().len(), 0);
     }
 
     // ====================================================================
@@ -1741,9 +1584,9 @@ mod tests {
         let album_id = create_album(&conn, "Trip").unwrap();
         add_photo_to_album(&conn, album_id, "/photos/album_pic.jpg").unwrap();
 
-        let photos = get_album_photos(&conn, album_id).unwrap();
-        assert_eq!(photos.len(), 1);
-        assert_eq!(photos[0].path, "/photos/album_pic.jpg");
+        let result = get_photos_page(&conn, &ViewFilter::Album { id: album_id }, None, 50).unwrap();
+        assert_eq!(result.photos.len(), 1);
+        assert_eq!(result.photos[0].path, "/photos/album_pic.jpg");
     }
 
     #[test]
@@ -1754,10 +1597,12 @@ mod tests {
 
         let album_id = create_album(&conn, "Temp").unwrap();
         add_photo_to_album(&conn, album_id, "/photos/remove_me.jpg").unwrap();
-        assert_eq!(get_album_photos(&conn, album_id).unwrap().len(), 1);
+        let before = get_photos_page(&conn, &ViewFilter::Album { id: album_id }, None, 50).unwrap();
+        assert_eq!(before.photos.len(), 1);
 
         remove_photo_from_album(&conn, album_id, "/photos/remove_me.jpg").unwrap();
-        assert_eq!(get_album_photos(&conn, album_id).unwrap().len(), 0);
+        let after = get_photos_page(&conn, &ViewFilter::Album { id: album_id }, None, 50).unwrap();
+        assert_eq!(after.photos.len(), 0);
     }
 
     #[test]
