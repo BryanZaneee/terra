@@ -44,6 +44,7 @@ const AppLayout = () => {
     setStatusWithTimeout, loadPhotosFromDatabase,
     handleUploadPhotos, handleToggleFavorite, handleDeleteSelected,
     loadAlbums, loadNextPage,
+    counts, refreshCounts,
     // cleanup
     showDuplicateScan, showScreenshotScan,
     showDuplicateReview, setShowDuplicateReview,
@@ -157,6 +158,7 @@ const AppLayout = () => {
 
       <Sidebar
         photos={photos}
+        counts={counts}
         viewMode={viewMode}
         setViewMode={setViewMode}
         searchQuery={searchQuery}
@@ -343,6 +345,7 @@ const AppLayout = () => {
               setShowTerraForm(false);
               loadPhotosFromDatabase();
               invoke('get_unreviewed_count').then(setUnreviewedCount).catch(console.error);
+              refreshCounts();
             }}
           />
         )}

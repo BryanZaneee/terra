@@ -5,7 +5,7 @@ import { processPhotos } from '../utils/photoHelpers';
 import { CONFIG } from '../config';
 import { usePagedPhotos } from './usePagedPhotos';
 
-export function usePhotos() {
+export function usePhotos({ refreshCounts } = {}) {
   const [photos, setPhotos] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -90,6 +90,7 @@ export function usePhotos() {
 
       const uploaded = await invoke('upload_photos', { filePaths: selected });
       await loadPhotosFromDatabase();
+      refreshCounts?.();
 
       setStatusWithTimeout(`Successfully uploaded ${uploaded.length} photos!`);
     } catch (err) {
@@ -109,11 +110,12 @@ export function usePhotos() {
         setSelectedPhoto({ ...selectedPhoto, is_favorite: newStatus });
       }
       await invoke('toggle_favorite', { path: photo.path, isFavorite: newStatus });
+      refreshCounts?.();
     } catch (err) {
       console.error("Failed to toggle favorite:", err);
       loadPhotosFromDatabase();
     }
-  }, [loadPhotosFromDatabase]);
+  }, [loadPhotosFromDatabase, refreshCounts]);
 
   const handleDeleteSelected = useCallback(async (selectedPhotos, clearSelection, loadAlbums, loadLocations) => {
     if (!confirm(`Are you sure you want to delete ${selectedPhotos.size} items? This cannot be undone.`)) return;
@@ -124,11 +126,12 @@ export function usePhotos() {
       clearSelection();
       loadAlbums();
       loadLocations();
+      refreshCounts?.();
     } catch (err) {
       console.error("Failed to delete photos:", err);
       setError(typeof err === 'string' ? err : err?.message ?? 'Failed to delete items');
     }
-  }, []);
+  }, [refreshCounts]);
 
   return {
     photos,

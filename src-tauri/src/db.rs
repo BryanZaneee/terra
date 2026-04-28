@@ -2,7 +2,7 @@ use rusqlite::{Connection, Result as SqlResult, params};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use dirs;
-use crate::{Cursor, PageResult, PhotoMetadata, ViewFilter};
+use crate::{Cursor, PageResult, PhotoMetadata, ViewCounts, ViewFilter};
 
 /// Get the path to the Terra database file
 pub fn get_db_path() -> PathBuf {
@@ -1500,45 +1500,77 @@ pub fn get_photos_page(
     Ok(PageResult { photos, next_cursor })
 }
 
-/// Top-level counts the sidebar reads instead of `photos.length`.
-/// Each value is one indexed COUNT(*); per-album and per-tag maps land in P.5.
-pub fn get_view_counts(conn: &Connection) -> SqlResult<HashMap<String, i64>> {
-    let mut counts = HashMap::new();
-
+/// Top-level counts the sidebar reads instead of `photos.length`, plus
+/// per-album / per-tag / per-smart-collection maps for badges.
+pub fn get_view_counts(conn: &Connection) -> SqlResult<ViewCounts> {
     let scalar = |sql: &str| -> SqlResult<i64> {
         conn.query_row(sql, [], |row| row.get(0))
     };
 
-    counts.insert(
-        "all".to_string(),
-        scalar("SELECT COUNT(*) FROM photos WHERE archived_at IS NULL")?,
-    );
-    counts.insert(
-        "favorites".to_string(),
-        scalar("SELECT COUNT(*) FROM photos WHERE archived_at IS NULL AND is_favorite = 1")?,
-    );
-    counts.insert(
-        "archived".to_string(),
-        scalar("SELECT COUNT(*) FROM photos WHERE archived_at IS NOT NULL")?,
-    );
-    counts.insert(
-        "unreviewed".to_string(),
-        scalar("SELECT COUNT(*) FROM photos WHERE archived_at IS NULL AND reviewed_at IS NULL")?,
-    );
-    counts.insert(
-        "videos_only".to_string(),
-        scalar(&format!(
-            "SELECT COUNT(*) FROM photos WHERE archived_at IS NULL AND {}",
-            IS_VIDEO_SQL_UNALIASED
-        ))?,
-    );
-    counts.insert(
-        "photos_only".to_string(),
-        scalar(&format!(
-            "SELECT COUNT(*) FROM photos WHERE archived_at IS NULL AND NOT {}",
-            IS_VIDEO_SQL_UNALIASED
-        ))?,
-    );
+    let mut counts = ViewCounts::default();
+    counts.all = scalar("SELECT COUNT(*) FROM photos WHERE archived_at IS NULL")?;
+    counts.favorites =
+        scalar("SELECT COUNT(*) FROM photos WHERE archived_at IS NULL AND is_favorite = 1")?;
+    counts.archived = scalar("SELECT COUNT(*) FROM photos WHERE archived_at IS NOT NULL")?;
+    counts.unreviewed =
+        scalar("SELECT COUNT(*) FROM photos WHERE archived_at IS NULL AND reviewed_at IS NULL")?;
+    counts.videos_only = scalar(&format!(
+        "SELECT COUNT(*) FROM photos WHERE archived_at IS NULL AND {}",
+        IS_VIDEO_SQL_UNALIASED
+    ))?;
+    counts.photos_only = scalar(&format!(
+        "SELECT COUNT(*) FROM photos WHERE archived_at IS NULL AND NOT {}",
+        IS_VIDEO_SQL_UNALIASED
+    ))?;
+
+    // by_album: one row per album that contains at least one non-archived
+    // photo. Albums with zero non-archived members aren't listed here; the
+    // sidebar's get_albums fetcher already shows them with count = 0.
+    let mut album_stmt = conn.prepare(
+        "SELECT ap.album_id, COUNT(*) FROM album_photos ap \
+         JOIN photos p ON p.path = ap.photo_path \
+         WHERE p.archived_at IS NULL \
+         GROUP BY ap.album_id",
+    )?;
+    let album_rows = album_stmt.query_map([], |row| {
+        Ok((row.get::<_, i64>(0)?.to_string(), row.get::<_, i64>(1)?))
+    })?;
+    for row in album_rows {
+        let (k, v) = row?;
+        counts.by_album.insert(k, v);
+    }
+
+    let mut tag_stmt = conn.prepare(
+        "SELECT pt.tag_id, COUNT(*) FROM photo_tags pt \
+         JOIN photos p ON p.path = pt.photo_path \
+         WHERE p.archived_at IS NULL \
+         GROUP BY pt.tag_id",
+    )?;
+    let tag_rows = tag_stmt.query_map([], |row| {
+        Ok((row.get::<_, i64>(0)?.to_string(), row.get::<_, i64>(1)?))
+    })?;
+    for row in tag_rows {
+        let (k, v) = row?;
+        counts.by_tag.insert(k, v);
+    }
+
+    // Smart collections — reuse the filter SQL builder so counts and page
+    // queries can never disagree on what each collection means.
+    for id in [
+        "size_large", "size_medium", "size_small",
+        "dim_4k", "dim_hd", "dim_portrait", "dim_landscape",
+        "time_7days", "time_30days", "time_year",
+        "status_unreviewed",
+    ] {
+        let f = smart_collection_filter_sql(id);
+        let sql = format!("SELECT COUNT(*) FROM photos p WHERE {}", f.clause);
+        let count: i64 = conn.query_row(
+            &sql,
+            rusqlite::params_from_iter(f.params.iter().map(|p| p.as_ref())),
+            |row| row.get(0),
+        )?;
+        counts.by_smart_collection.insert(id.to_string(), count);
+    }
 
     Ok(counts)
 }
@@ -2026,9 +2058,16 @@ mod tests {
     fn view_counts_empty_library() {
         let conn = setup_db();
         let counts = get_view_counts(&conn).unwrap();
-        for key in ["all", "favorites", "archived", "unreviewed", "photos_only", "videos_only"] {
-            assert_eq!(counts.get(key).copied(), Some(0), "{} should be 0", key);
-        }
+        assert_eq!(counts.all, 0);
+        assert_eq!(counts.favorites, 0);
+        assert_eq!(counts.archived, 0);
+        assert_eq!(counts.unreviewed, 0);
+        assert_eq!(counts.photos_only, 0);
+        assert_eq!(counts.videos_only, 0);
+        assert!(counts.by_album.is_empty());
+        assert!(counts.by_tag.is_empty());
+        // Smart-collection map always has every known id, even when zero.
+        assert!(counts.by_smart_collection.contains_key("size_large"));
     }
 
     #[test]
@@ -2266,12 +2305,55 @@ mod tests {
 
         let counts = get_view_counts(&conn).unwrap();
         // a, b, fav, clip — old is archived so excluded.
-        assert_eq!(counts["all"], 4);
-        assert_eq!(counts["favorites"], 1);
-        assert_eq!(counts["archived"], 1);
+        assert_eq!(counts.all, 4);
+        assert_eq!(counts.favorites, 1);
+        assert_eq!(counts.archived, 1);
         // a was marked reviewed; b, fav, clip remain unreviewed.
-        assert_eq!(counts["unreviewed"], 3);
-        assert_eq!(counts["videos_only"], 1);
-        assert_eq!(counts["photos_only"], 3);
+        assert_eq!(counts.unreviewed, 3);
+        assert_eq!(counts.videos_only, 1);
+        assert_eq!(counts.photos_only, 3);
+    }
+
+    #[test]
+    fn view_counts_by_album_excludes_archived_members() {
+        let conn = setup_db();
+        insert_dated(&conn, "/p/a.jpg", "a.jpg", 1000);
+        insert_dated(&conn, "/p/b.jpg", "b.jpg", 1001);
+        insert_dated(&conn, "/p/c.jpg", "c.jpg", 1002);
+        let trip = create_album(&conn, "Trip").unwrap();
+        add_photo_to_album(&conn, trip, "/p/a.jpg").unwrap();
+        add_photo_to_album(&conn, trip, "/p/b.jpg").unwrap();
+        add_photo_to_album(&conn, trip, "/p/c.jpg").unwrap();
+        archive_photo(&conn, "/p/c.jpg").unwrap();
+
+        let counts = get_view_counts(&conn).unwrap();
+        assert_eq!(counts.by_album.get(&trip.to_string()).copied(), Some(2));
+    }
+
+    #[test]
+    fn view_counts_by_tag_excludes_archived_members() {
+        let conn = setup_db();
+        insert_dated(&conn, "/p/a.jpg", "a.jpg", 1000);
+        insert_dated(&conn, "/p/b.jpg", "b.jpg", 1001);
+        let nature = create_tag(&conn, "nature", "#0f0").unwrap();
+        add_tags_to_photos(&conn, &[nature], &["/p/a.jpg".into(), "/p/b.jpg".into()]).unwrap();
+        archive_photo(&conn, "/p/b.jpg").unwrap();
+
+        let counts = get_view_counts(&conn).unwrap();
+        assert_eq!(counts.by_tag.get(&nature.to_string()).copied(), Some(1));
+    }
+
+    #[test]
+    fn view_counts_by_smart_collection_uses_filter_sql() {
+        let conn = setup_db();
+        // 6 MB photo qualifies for size_large.
+        let mut big = test_photo("/p/big.jpg", "big.jpg");
+        big.date_taken = 1000;
+        insert_photo(&conn, &big, "upload").unwrap();
+        update_photo_file_size(&conn, "/p/big.jpg", 6 * 1024 * 1024).unwrap();
+
+        let counts = get_view_counts(&conn).unwrap();
+        assert_eq!(counts.by_smart_collection.get("size_large").copied(), Some(1));
+        assert_eq!(counts.by_smart_collection.get("size_small").copied(), Some(0));
     }
 }

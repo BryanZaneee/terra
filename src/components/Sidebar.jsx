@@ -10,6 +10,7 @@ import { useTheme } from '../contexts/ThemeContext';
 
 const Sidebar = ({
   photos,
+  counts,
   viewMode,
   setViewMode,
   searchQuery,
@@ -37,6 +38,10 @@ const Sidebar = ({
   onOpenImport,
 }) => {
   const { isLight, toggleTheme } = useTheme();
+  // Library total. With pagination, photos.length is just the loaded window
+  // — counts.all is the authoritative size. Falls back to photos.length on
+  // cold start before the first count refresh resolves.
+  const totalCount = counts?.all ?? photos.length;
   return (
     <div className="fixed left-4 top-4 bottom-4 w-64 rounded-2xl border border-white/10 bg-black/30 backdrop-blur-xl shadow-2xl flex flex-col z-20 overflow-hidden">
       <div className="p-6 border-b border-white/5">
@@ -61,8 +66,8 @@ const Sidebar = ({
           </div>
         </div>
         <div className="text-xs text-white/40 font-mono mt-1 tracking-widest">LOCAL LIBRARY</div>
-        {photos.length > 0 && (
-          <div className="mt-2 text-xs text-emerald-400/60 font-mono">{photos.length} photos</div>
+        {totalCount > 0 && (
+          <div className="mt-2 text-xs text-emerald-400/60 font-mono">{totalCount.toLocaleString()} photos</div>
         )}
       </div>
 

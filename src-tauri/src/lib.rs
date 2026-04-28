@@ -176,6 +176,30 @@ pub struct PageResult {
     pub next_cursor: Option<Cursor>,
 }
 
+/// Sidebar count cache (PAGINATION_PLAN.md, P.5).
+///
+/// In paginated mode the frontend can't use `photos.length` for sidebar
+/// badges any more — only the loaded window is in memory. This struct holds
+/// the COUNT(*) of every counted slice so the sidebar shows the true total.
+///
+/// `by_album`/`by_tag`/`by_smart_collection` use `String` keys because JSON
+/// object keys are strings on the wire and React iteration is simpler that
+/// way. The existing `get_albums`/`get_all_tags` fetchers continue to
+/// populate the per-row count fields they always have — these maps are an
+/// additional, single-call lookup for callers that just need totals.
+#[derive(Serialize, Debug, Default)]
+pub struct ViewCounts {
+    pub all: i64,
+    pub favorites: i64,
+    pub archived: i64,
+    pub unreviewed: i64,
+    pub photos_only: i64,
+    pub videos_only: i64,
+    pub by_album: HashMap<String, i64>,
+    pub by_tag: HashMap<String, i64>,
+    pub by_smart_collection: HashMap<String, i64>,
+}
+
 /// COMMAND: Get all photos from the database
 #[tauri::command]
 fn get_all_photos() -> Result<Vec<PhotoMetadata>, String> {
@@ -1416,10 +1440,11 @@ fn get_photos_page(
     })
 }
 
-/// COMMAND: Top-level counts for sidebar badges. Cheap COUNT(*) per category;
-/// frontend caches and refreshes after mutations.
+/// COMMAND: Top-level counts for sidebar badges plus per-album / per-tag /
+/// per-smart-collection maps. Each value is one indexed COUNT(*); frontend
+/// caches the result and refreshes after mutations.
 #[tauri::command]
-fn get_view_counts() -> Result<HashMap<String, i64>, String> {
+fn get_view_counts() -> Result<ViewCounts, String> {
     with_db("get_view_counts", |conn| db::get_view_counts(conn))
 }
 
