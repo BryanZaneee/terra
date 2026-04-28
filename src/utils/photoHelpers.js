@@ -1,5 +1,22 @@
 import { convertFileSrc } from '@tauri-apps/api/core';
 
+// Must match THUMB_SIZE in src-tauri/src/thumbnails.rs.
+export const THUMB_SIZE = 256;
+
+/**
+ * Resolve the asset URL to use for a photo's gallery card.
+ * Returns the cached 256² thumbnail when ready, else falls back to the
+ * original. Pure function — no side effects, no IO.
+ */
+export function getThumbnailUrl(photo, thumbCacheRoot) {
+  if (!thumbCacheRoot) return photo.url;
+  if (photo.thumb_status !== 'ready') return photo.url;
+  const hash = photo.content_hash;
+  if (!hash) return photo.url;
+  const prefix = hash.length >= 2 ? hash.slice(0, 2) : hash;
+  return convertFileSrc(`${thumbCacheRoot}/${THUMB_SIZE}/${prefix}/${hash}.jpg`);
+}
+
 /**
  * Process raw photo metadata from the Rust backend into the format used by the React frontend.
  */

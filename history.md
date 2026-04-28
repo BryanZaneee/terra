@@ -24,8 +24,8 @@ face detection, or RAW workflows — those trade-offs are documented in
 | A | Photo modal polish, keyboard, skeletons, errors, tooltips | done |
 | E (camera/lens/video) | Python + exiftool metadata enrichment | done |
 | B.1 | Rust thumbnail pipeline + DB column + commands | done |
-| B.2 | Frontend thumbnail consumption + Settings backfill UI | next |
-| B.3 | Virtualized gallery (react-virtuoso) | pending |
+| B.2 | Frontend thumbnail consumption + Settings backfill UI | done |
+| B.3 | Virtualized gallery (react-virtuoso) | next |
 | C | Discovery (FTS, filters, memories, map) | pending |
 | D | Imports (Takeout, Apple, Snapchat) | pending |
 | E (rest) | Date editing, video thumbnails, HEIC | pending |
@@ -74,6 +74,68 @@ Detailed entries appear below as each item lands.
   cached manually. react-virtuoso has built-in `<GroupedVirtuoso>` that
   matches our existing PhotoGrid shape exactly. Bundle weight is
   comparable (~30KB gzip).
+
+---
+
+### 2026-04-27 — Phase B.2: Frontend thumbnail consumption + Settings UI
+
+**What:** `getThumbnailUrl(photo, thumbCacheRoot)` helper in
+`photoHelpers.js` that derives the content-addressed thumb URL with a
+graceful fallback to the original. AppContext fetches `thumb_cache_root`
+once on mount and exposes it. PhotoCard reads via `useContext(AppContext)`
+with null-tolerance so isolated tests don't have to wrap. SettingsModal
+gains a "Thumbnails" section with progress bar wired to the
+`thumbnail_progress` event. App.jsx wires `onPhotosChanged` so a
+backfill triggers a gallery reload.
+
+**Why expose AppContext directly (not just useAppContext) for PhotoCard's
+context lookup:** PhotoCard tests render the card in isolation. If
+PhotoCard called `useAppContext()`, every existing test would have to
+wrap in `<AppProvider>` (and AppProvider triggers Tauri invokes on
+mount, which gets noisy fast). Using `useContext(AppContext)` directly
+returns null when no provider is present, and PhotoCard treats that as
+"no thumb cache root yet" and falls back to the original URL — same
+behavior as on first mount before the IPC resolves. This keeps tests
+hermetic without adding an `AppContextOrNull` shim.
+
+**Why the helper instead of computing in `processPhotos`:** the
+thumbCacheRoot isn't known when `processPhotos` runs (it loads
+asynchronously). Recomputing at render time inside PhotoCard avoids a
+stale-data window where photos are processed before the root has
+resolved. Also keeps `processPhotos` pure of any IPC context.
+
+**Why `THUMB_SIZE` is duplicated as a JS constant:** matches the Rust
+`pub const THUMB_SIZE: u32 = 256` exactly. Trade single-source-of-truth
+for one less IPC call at startup. When we add a 1024² preview tier,
+either expose the sizes via Tauri command at startup or keep two
+constants — decide then.
+
+**Why Settings refreshes the gallery via `onPhotosChanged` callback
+instead of a custom event:** the existing modal pattern threads
+callbacks; adding a new global event channel for one use case isn't
+worth the indirection. After a backfill completes, App.jsx's
+`loadPhotosFromDatabase` re-pulls photos so the new `thumb_status`
+field is read.
+
+**Test fix.** Updated photoHelpers tests to `decodeURIComponent`
+the result before asserting path structure — `convertFileSrc` is
+mocked to URL-encode the path, which is what production Tauri does.
+
+**Files added/changed.**
+- Changed: `src/utils/photoHelpers.js` (`THUMB_SIZE` const, new
+  `getThumbnailUrl` helper); `src/utils/photoHelpers.test.js` (5 new
+  tests); `src/contexts/AppContext.jsx` (export AppContext, fetch + expose
+  thumbCacheRoot); `src/components/PhotoCard.jsx` (read context with
+  null-tolerance, use helper); `src/components/SettingsModal.jsx`
+  (Thumbnails section + progress bar + onPhotosChanged callback after
+  enrichment too); `src/App.jsx` (pass `onPhotosChanged`).
+
+**Verification.** `npm run test:run`: 152/152 (was 147, +5
+getThumbnailUrl tests).
+
+**Deferred to B.3.** Replace the existing flex/grid groups in PhotoGrid
+with `<GroupedVirtuoso>` so 50K-photo libraries don't create 50K DOM
+nodes.
 
 ---
 

@@ -2,9 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { open } from '@tauri-apps/plugin-dialog';
-import { X, Settings, FolderOpen, AlertTriangle, Sparkles } from 'lucide-react';
+import { X, Settings, FolderOpen, AlertTriangle, Sparkles, Image as ImageIcon } from 'lucide-react';
 
-const SettingsModal = ({ isOpen, onClose, libraryPath, onLibraryPathChange }) => {
+const SettingsModal = ({ isOpen, onClose, libraryPath, onLibraryPathChange, onPhotosChanged }) => {
   const [currentPath, setCurrentPath] = useState(libraryPath || '');
   const [saving, setSaving] = useState(false);
 
@@ -12,6 +12,11 @@ const SettingsModal = ({ isOpen, onClose, libraryPath, onLibraryPathChange }) =>
   const [enrichProgress, setEnrichProgress] = useState({ processed: 0, total: 0 });
   const [enrichResult, setEnrichResult] = useState(null);
   const [enrichError, setEnrichError] = useState(null);
+
+  const [thumbRunning, setThumbRunning] = useState(false);
+  const [thumbProgress, setThumbProgress] = useState({ processed: 0, total: 0 });
+  const [thumbResult, setThumbResult] = useState(null);
+  const [thumbError, setThumbError] = useState(null);
 
   useEffect(() => {
     setCurrentPath(libraryPath || '');
@@ -25,6 +30,15 @@ const SettingsModal = ({ isOpen, onClose, libraryPath, onLibraryPathChange }) =>
     }).then((u) => { unlisten = u; });
     return () => { if (unlisten) unlisten(); };
   }, [enrichRunning]);
+
+  useEffect(() => {
+    if (!thumbRunning) return;
+    let unlisten;
+    listen('thumbnail_progress', (event) => {
+      setThumbProgress(event.payload);
+    }).then((u) => { unlisten = u; });
+    return () => { if (unlisten) unlisten(); };
+  }, [thumbRunning]);
 
   if (!isOpen) return null;
 
@@ -52,6 +66,7 @@ const SettingsModal = ({ isOpen, onClose, libraryPath, onLibraryPathChange }) =>
     try {
       const count = await invoke('enrich_all_metadata');
       setEnrichResult(count);
+      onPhotosChanged?.();
     } catch (err) {
       const msg = typeof err === 'string' ? err : err?.message ?? 'Failed to enrich metadata';
       setEnrichError(msg);
@@ -60,8 +75,28 @@ const SettingsModal = ({ isOpen, onClose, libraryPath, onLibraryPathChange }) =>
     }
   };
 
+  const handleGenerateThumbnails = async () => {
+    setThumbRunning(true);
+    setThumbResult(null);
+    setThumbError(null);
+    setThumbProgress({ processed: 0, total: 0 });
+    try {
+      const count = await invoke('generate_missing_thumbnails');
+      setThumbResult(count);
+      onPhotosChanged?.();
+    } catch (err) {
+      const msg = typeof err === 'string' ? err : err?.message ?? 'Failed to generate thumbnails';
+      setThumbError(msg);
+    } finally {
+      setThumbRunning(false);
+    }
+  };
+
   const enrichPercent = enrichProgress.total > 0
     ? Math.round((enrichProgress.processed / enrichProgress.total) * 100)
+    : 0;
+  const thumbPercent = thumbProgress.total > 0
+    ? Math.round((thumbProgress.processed / thumbProgress.total) * 100)
     : 0;
 
   const exiftoolMissing = enrichError && /exiftool/i.test(enrichError);
@@ -100,6 +135,51 @@ const SettingsModal = ({ isOpen, onClose, libraryPath, onLibraryPathChange }) =>
               <AlertTriangle size={14} className="shrink-0 mt-0.5 text-yellow-500/60" />
               <span>New uploads will go to the new path. Existing photos stay in their current location.</span>
             </div>
+          </div>
+
+          {/* Thumbnails */}
+          <div className="pt-4 border-t border-white/10">
+            <label className="block text-sm font-medium text-white/70 mb-2">Thumbnails</label>
+            <p className="text-xs text-white/40 mb-3">
+              Generate cached 256² thumbnails for each photo. Required for snappy gallery scrolling on large libraries; videos and undecodable HEICs are skipped automatically.
+            </p>
+
+            <button
+              onClick={handleGenerateThumbnails}
+              disabled={thumbRunning}
+              className="flex items-center gap-2 px-4 py-2 bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-400/30 hover:border-emerald-400/50 rounded-lg text-sm text-emerald-200 transition-colors disabled:opacity-50"
+            >
+              <ImageIcon size={16} />
+              {thumbRunning ? 'Generating…' : 'Generate Missing Thumbnails'}
+            </button>
+
+            {thumbRunning && (
+              <div className="mt-3 space-y-1">
+                <div className="flex justify-between text-xs font-mono text-white/50">
+                  <span>{thumbProgress.processed} / {thumbProgress.total || '?'}</span>
+                  <span>{thumbPercent}%</span>
+                </div>
+                <div className="h-1.5 bg-white/10 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-emerald-400 transition-all duration-300"
+                    style={{ width: `${thumbPercent}%` }}
+                  />
+                </div>
+              </div>
+            )}
+
+            {thumbResult != null && !thumbRunning && (
+              <div className="mt-3 text-xs text-emerald-400 font-mono">
+                Generated {thumbResult} thumbnail{thumbResult === 1 ? '' : 's'}.
+              </div>
+            )}
+
+            {thumbError && !thumbRunning && (
+              <div className="mt-3 px-3 py-2 rounded-lg bg-red-500/10 border border-red-400/20 text-xs text-red-300 font-mono break-words">
+                <AlertTriangle size={14} className="inline-block mr-1 -mt-0.5 text-red-400" />
+                {thumbError}
+              </div>
+            )}
           </div>
 
           {/* Photo Metadata Enrichment */}

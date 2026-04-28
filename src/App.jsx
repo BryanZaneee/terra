@@ -249,6 +249,7 @@ const AppLayout = () => {
         onClose={() => setShowSettings(false)}
         libraryPath={libraryPath}
         onLibraryPathChange={setLibraryPath}
+        onPhotosChanged={loadPhotosFromDatabase}
       />
 
       <TagCreateModal

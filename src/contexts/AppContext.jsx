@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { usePhotos } from '../hooks/usePhotos';
 import { useCleanup } from '../hooks/useCleanup';
 
-const AppContext = createContext(null);
+export const AppContext = createContext(null);
 
 export function AppProvider({ children }) {
   const photosHook = usePhotos();
@@ -11,6 +11,7 @@ export function AppProvider({ children }) {
   const [albums, setAlbums] = useState([]);
   const [tags, setTags] = useState([]);
   const [selectedTagIds, setSelectedTagIds] = useState([]);
+  const [thumbCacheRoot, setThumbCacheRoot] = useState(null);
 
   const loadAlbums = useCallback(async () => {
     try {
@@ -60,6 +61,9 @@ export function AppProvider({ children }) {
     photosHook.loadPhotosFromDatabase();
     loadAlbums();
     loadTags();
+    invoke('get_thumb_cache_root')
+      .then(setThumbCacheRoot)
+      .catch((err) => console.error('Failed to get thumb cache root:', err));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const value = {
@@ -72,6 +76,7 @@ export function AppProvider({ children }) {
     selectedTagIds,
     setSelectedTagIds,
     loadTags,
+    thumbCacheRoot,
     ...cleanupHook,
   };
 

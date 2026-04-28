@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { processPhotos, formatBytes } from './photoHelpers';
+import { processPhotos, formatBytes, getThumbnailUrl, THUMB_SIZE } from './photoHelpers';
 
 // convertFileSrc is mocked in test/setup.js
 
@@ -84,6 +84,40 @@ describe('processPhotos', () => {
 
   it('returns empty array for empty input', () => {
     expect(processPhotos([])).toEqual([]);
+  });
+});
+
+describe('getThumbnailUrl', () => {
+  const root = '/Users/x/Library/Application Support/terra/thumbs';
+
+  it('returns the original url when no cache root is provided', () => {
+    const photo = { url: 'asset://orig', content_hash: 'abc123', thumb_status: 'ready' };
+    expect(getThumbnailUrl(photo, null)).toBe('asset://orig');
+    expect(getThumbnailUrl(photo, undefined)).toBe('asset://orig');
+  });
+
+  it('returns the original url when thumb is not ready', () => {
+    const photo = { url: 'asset://orig', content_hash: 'abc123', thumb_status: 'failed' };
+    expect(getThumbnailUrl(photo, root)).toBe('asset://orig');
+  });
+
+  it('returns the original url when content_hash is missing', () => {
+    const photo = { url: 'asset://orig', content_hash: null, thumb_status: 'ready' };
+    expect(getThumbnailUrl(photo, root)).toBe('asset://orig');
+  });
+
+  it('builds the cached thumb path when ready and content-addressed', () => {
+    const photo = { url: 'asset://orig', content_hash: 'abc123def', thumb_status: 'ready' };
+    const result = getThumbnailUrl(photo, root);
+    // convertFileSrc encodes path separators, so decode before asserting structure.
+    expect(decodeURIComponent(result)).toContain(`${THUMB_SIZE}/ab/abc123def.jpg`);
+    expect(result).toContain('asset://');
+  });
+
+  it('handles a single-character hash gracefully', () => {
+    const photo = { url: 'asset://orig', content_hash: 'a', thumb_status: 'ready' };
+    const result = getThumbnailUrl(photo, root);
+    expect(decodeURIComponent(result)).toContain('/a/a.jpg');
   });
 });
 

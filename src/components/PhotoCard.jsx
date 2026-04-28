@@ -1,6 +1,13 @@
+import { useContext } from 'react';
 import { CheckCircle, Heart, Play } from 'lucide-react';
+import { AppContext } from '../contexts/AppContext';
+import { getThumbnailUrl } from '../utils/photoHelpers';
 
 const PhotoCard = ({ photo, isSelected, selectionMode, onPhotoClick, onToggleSelection }) => {
+  // Tolerate missing provider so isolated component tests don't need to wrap in AppProvider.
+  const ctx = useContext(AppContext);
+  const cardSrc = getThumbnailUrl(photo, ctx?.thumbCacheRoot ?? null);
+
   return (
     <div
       onClick={(e) => onPhotoClick(photo, e)}
@@ -22,7 +29,7 @@ const PhotoCard = ({ photo, isSelected, selectionMode, onPhotoClick, onToggleSel
       </div>
 
       <img
-        src={photo.url}
+        src={cardSrc}
         alt={photo.name}
         loading="lazy"
         className={`w-full h-full object-cover transition-transform duration-700 group-hover:scale-110 opacity-80 group-hover:opacity-100 ${isSelected ? 'scale-95' : ''}`}
