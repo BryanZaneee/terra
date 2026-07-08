@@ -2,9 +2,12 @@ use rusqlite::{Connection, Result as SqlResult, params};
 use crate::PhotoMetadata;
 
 pub fn insert_photo(conn: &Connection, photo: &PhotoMetadata, source_type: &str) -> SqlResult<()> {
-    conn.execute(
+    // prepare_cached: import loops call this once per photo.
+    let mut stmt = conn.prepare_cached(
         "INSERT OR REPLACE INTO photos (path, name, date_taken, width, height, source_type, created_at, is_favorite, content_hash, latitude, longitude, location_name)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+    )?;
+    stmt.execute(
         params![
             photo.path,
             photo.name,
@@ -21,6 +24,13 @@ pub fn insert_photo(conn: &Connection, photo: &PhotoMetadata, source_type: &str)
         ],
     )?;
     Ok(())
+}
+
+/// Check if a photo with the given hash exists (called per photo on import).
+pub fn hash_exists(conn: &Connection, hash: &str) -> SqlResult<bool> {
+    let mut stmt = conn.prepare_cached("SELECT COUNT(*) FROM photos WHERE content_hash = ?1")?;
+    let count: i64 = stmt.query_row(params![hash], |row| row.get(0))?;
+    Ok(count > 0)
 }
 
 /// Delete a photo from the database
@@ -51,9 +61,3 @@ pub fn get_locations(conn: &Connection) -> SqlResult<Vec<(String, i64)>> {
     rows.collect()
 }
 
-/// Check if a photo with the given hash exists
-pub fn hash_exists(conn: &Connection, hash: &str) -> SqlResult<bool> {
-    let mut stmt = conn.prepare("SELECT COUNT(*) FROM photos WHERE content_hash = ?1")?;
-    let count: i64 = stmt.query_row(params![hash], |row| row.get(0))?;
-    Ok(count > 0)
-}

@@ -1,4 +1,4 @@
-import { useContext } from 'react';
+import { memo, useContext } from 'react';
 import { CheckCircle, Heart, Play } from 'lucide-react';
 import { AppContext } from '../contexts/AppContext';
 import { getThumbnailUrl } from '../utils/photoHelpers';
@@ -62,4 +62,5 @@ const PhotoCard = ({ photo, isSelected, selectionMode, onPhotoClick, onToggleSel
   );
 };
 
-export default PhotoCard;
+// memo: rendered once per visible photo; only re-render when its own props change.
+export default memo(PhotoCard);

@@ -4,7 +4,6 @@ import { Copy, MonitorSmartphone } from 'lucide-react';
 
 import { supportsPaginatedScroll } from './utils/viewQuery';
 import ErrorBoundary from './components/ErrorBoundary';
-import DitherBackground from './components/DitherBackground';
 import Sidebar from './components/Sidebar';
 import PhotoGrid from './components/PhotoGrid';
 import SelectionToolbar from './components/SelectionToolbar';
@@ -91,14 +90,15 @@ const AppLayout = () => {
     onCycleViewMode: cycleViewMode,
   });
 
-  const onPhotoClick = (photo, e) => {
+  // Stable references so memo(PhotoCard) isn't defeated by fresh closures.
+  const onPhotoClick = useCallback((photo, e) => {
     handlePhotoClick(photo, e, setSelectedPhoto);
-  };
+  }, [handlePhotoClick]);
 
-  const onToggleSelection = (path) => {
+  const onToggleSelection = useCallback((path) => {
     if (!selectionMode) setSelectionMode(true);
     toggleSelection(path);
-  };
+  }, [selectionMode, setSelectionMode, toggleSelection]);
 
   const onToggleFavorite = (photo) => {
     handleToggleFavorite(photo, selectedPhoto, setSelectedPhoto);
@@ -168,7 +168,7 @@ const AppLayout = () => {
 
   return (
     <div className="min-h-screen text-gray-100 font-sans selection:bg-white/20 selection:text-white">
-      <DitherBackground />
+      <div className="app-background" aria-hidden="true" />
 
       <Sidebar
         photos={photos}

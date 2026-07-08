@@ -286,6 +286,11 @@ fn import_media_paths(
 ) -> Result<ProviderImportSummary, String> {
     let library_path = db::get_library_path();
     let conn = db_conn()?;
+    // One transaction for the whole import: per-row implicit commits dominate
+    // import time on large batches.
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|e| format!("Failed to start import transaction: {}", e))?;
 
     // Use cached geocoder locations for better performance
     let geocoder = ReverseGeocoder::new(&GEOCODER_LOCATIONS);
@@ -458,6 +463,8 @@ fn import_media_paths(
         emit_import_progress(progress_window, &summary, total, index + 1, "copying");
     }
 
+    tx.commit()
+        .map_err(|e| format!("Failed to commit import transaction: {}", e))?;
     emit_import_progress(progress_window, &summary, total, total, "complete");
     Ok(summary)
 }
@@ -506,10 +513,11 @@ fn get_albums() -> Result<Vec<db::Album>, String> {
 #[tauri::command]
 fn add_to_album(album_id: i64, photo_paths: Vec<String>) -> Result<(), String> {
     let conn = db_conn()?;
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
     for path in photo_paths {
         db::add_photo_to_album(&conn, album_id, &path).map_err(|e| format!("Failed to add to album: {}", e))?;
     }
-    Ok(())
+    tx.commit().map_err(|e| e.to_string())
 }
 
 /// Check if a path is within the Terra managed library or archive directories.
@@ -635,11 +643,14 @@ async fn scan_for_duplicates(window: tauri::Window) -> Result<ScanProgress, Stri
         phase: "saving".to_string(),
     });
 
-    // Save hashes to database (must be done sequentially)
-    for (path, hash) in results {
-        if let Some(h) = hash {
-            let _ = db::update_photo_dhash(&conn, &path, h as i64);
+    // Save hashes to database (must be done sequentially, one transaction)
+    if let Ok(tx) = conn.unchecked_transaction() {
+        for (path, hash) in results {
+            if let Some(h) = hash {
+                let _ = db::update_photo_dhash(&conn, &path, h as i64);
+            }
         }
+        let _ = tx.commit();
     }
 
     // Emit completion
@@ -1128,10 +1139,13 @@ async fn populate_file_sizes(window: tauri::Window) -> Result<ScanProgress, Stri
         phase: "saving".to_string(),
     });
 
-    for (path, size) in results {
-        if let Some(s) = size {
-            let _ = db::update_photo_file_size(&conn, &path, s as i64);
+    if let Ok(tx) = conn.unchecked_transaction() {
+        for (path, size) in results {
+            if let Some(s) = size {
+                let _ = db::update_photo_file_size(&conn, &path, s as i64);
+            }
         }
+        let _ = tx.commit();
     }
 
     let _ = window.emit("file_size_progress", ScanProgress {

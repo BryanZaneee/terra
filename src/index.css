@@ -16,6 +16,7 @@
   --color-ink: 255 255 255;
   --color-scrollbar-track: 0 0 0;
   --color-scrollbar-thumb: 255 255 255;
+  --color-glow: 42 42 42;
   color-scheme: dark;
 }
 
@@ -25,7 +26,22 @@
   --color-ink: 15 23 42;
   --color-scrollbar-track: 15 23 42;
   --color-scrollbar-thumb: 15 23 42;
+  --color-glow: 200 194 180;
   color-scheme: light;
+}
+
+/* Static ambient background (replaced the animated ASCII dither canvas —
+   same palette, zero runtime cost). */
+.app-background {
+  position: fixed;
+  inset: 0;
+  z-index: -10;
+  pointer-events: none;
+  background-color: rgb(var(--color-bg));
+  background-image:
+    radial-gradient(ellipse 60% 45% at 18% 20%, rgb(var(--color-glow) / 0.5), transparent 70%),
+    radial-gradient(ellipse 50% 40% at 82% 65%, rgb(var(--color-glow) / 0.35), transparent 70%),
+    radial-gradient(ellipse 45% 35% at 50% 95%, rgb(var(--color-glow) / 0.25), transparent 70%);
 }
 
 html,

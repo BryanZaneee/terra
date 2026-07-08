@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useMemo } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { CONFIG } from '../config';
@@ -144,7 +144,8 @@ export function useCleanup({ reloadCurrentView, setStatusWithTimeout, setError, 
     }
   }, []);
 
-  return {
+  // Stable object so AppContext's useMemo'd value only changes when a member does.
+  return useMemo(() => ({
     showDuplicateScan,
     showScreenshotScan,
     showDuplicateReview,
@@ -168,5 +169,11 @@ export function useCleanup({ reloadCurrentView, setStatusWithTimeout, setError, 
     refreshDuplicateGroups,
     refreshScreenshots,
     loadArchivedPhotos,
-  };
+  }), [
+    showDuplicateScan, showScreenshotScan, showDuplicateReview, showScreenshotReview,
+    showArchive, scanProgress, scanPhase, duplicateGroups, screenshots, archivedPhotos,
+    handleScanForDuplicates, handleDuplicateScanComplete, handleScanForScreenshots,
+    handleScreenshotScanComplete, handleArchivePhotos, handleRestorePhotos,
+    handleOpenArchive, refreshDuplicateGroups, refreshScreenshots, loadArchivedPhotos,
+  ]);
 }

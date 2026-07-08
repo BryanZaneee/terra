@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { usePhotos } from '../hooks/usePhotos';
 import { useCleanup } from '../hooks/useCleanup';
@@ -83,7 +83,9 @@ export function AppProvider({ children }) {
       .catch((err) => console.error('Failed to get thumb cache root:', err));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const value = {
+  // photosHook/cleanupHook are themselves useMemo'd, so this only changes
+  // when actual state changes — consumers stop re-rendering on unrelated flips.
+  const value = useMemo(() => ({
     ...photosHook,
     albums,
     loadAlbums,
@@ -97,7 +99,11 @@ export function AppProvider({ children }) {
     counts,
     refreshCounts,
     ...cleanupHook,
-  };
+  }), [
+    photosHook, cleanupHook, albums, loadAlbums, handleCreateAlbum,
+    handleAddToAlbum, tags, selectedTagIds, loadTags, thumbCacheRoot,
+    counts, refreshCounts,
+  ]);
 
   return (
     <AppContext.Provider value={value}>

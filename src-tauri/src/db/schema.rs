@@ -178,6 +178,12 @@ pub fn init_schema(conn: &Connection) -> SqlResult<()> {
         [],
     )?;
 
+    // Screenshots view + analytics filter on is_screenshot = 1.
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_screenshot ON photos(is_screenshot)",
+        [],
+    )?;
+
     // Create tags table
     conn.execute(
         "CREATE TABLE IF NOT EXISTS tags (

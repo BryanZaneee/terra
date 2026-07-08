@@ -63,18 +63,21 @@ pub fn get_tags_for_photo(conn: &Connection, path: &str) -> SqlResult<Vec<Tag>> 
     rows.collect()
 }
 
-/// Add tags to photos (bulk operation)
+/// Add tags to photos (bulk operation, single transaction)
 pub fn add_tags_to_photos(conn: &Connection, tag_ids: &[i64], photo_paths: &[String]) -> SqlResult<()> {
     let now = chrono::Utc::now().timestamp();
-    for tag_id in tag_ids {
-        for path in photo_paths {
-            conn.execute(
-                "INSERT OR IGNORE INTO photo_tags (tag_id, photo_path, added_at) VALUES (?1, ?2, ?3)",
-                params![tag_id, path, now],
-            )?;
+    let tx = conn.unchecked_transaction()?;
+    {
+        let mut stmt = conn.prepare_cached(
+            "INSERT OR IGNORE INTO photo_tags (tag_id, photo_path, added_at) VALUES (?1, ?2, ?3)",
+        )?;
+        for tag_id in tag_ids {
+            for path in photo_paths {
+                stmt.execute(params![tag_id, path, now])?;
+            }
         }
     }
-    Ok(())
+    tx.commit()
 }
 
 /// Remove a tag from a photo

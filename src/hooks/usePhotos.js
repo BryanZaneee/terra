@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { CONFIG } from '../config';
@@ -111,7 +111,8 @@ export function usePhotos({ refreshCounts } = {}) {
     }
   }, [reloadCurrentView, refreshCounts]);
 
-  return {
+  // Stable object so AppContext's useMemo'd value only changes when a member does.
+  return useMemo(() => ({
     photos,
     setPhotos,
     loading,
@@ -128,5 +129,10 @@ export function usePhotos({ refreshCounts } = {}) {
     handleToggleFavorite,
     handleDeleteSelected,
     loadNextPage: paged.loadNextPage,
-  };
+  }), [
+    photos, loading, error, uploadStatus, libraryPath,
+    setStatusWithTimeout, loadPhotosFromDatabase, reloadCurrentView,
+    handleUploadPhotos, handleToggleFavorite, handleDeleteSelected,
+    paged.loadNextPage,
+  ]);
 }
