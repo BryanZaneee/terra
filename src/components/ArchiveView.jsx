@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { X, RotateCcw, Archive } from 'lucide-react';
+import { toggleInSet } from '../utils/photoHelpers';
 
 const ArchiveView = ({ isOpen, onClose, archivedPhotos, onRestore, onRefresh }) => {
   const [selectedForRestore, setSelectedForRestore] = useState(new Set());
@@ -8,13 +9,7 @@ const ArchiveView = ({ isOpen, onClose, archivedPhotos, onRestore, onRefresh }) 
   if (!isOpen) return null;
 
   const togglePhotoSelection = (path) => {
-    const newSet = new Set(selectedForRestore);
-    if (newSet.has(path)) {
-      newSet.delete(path);
-    } else {
-      newSet.add(path);
-    }
-    setSelectedForRestore(newSet);
+    setSelectedForRestore(toggleInSet(selectedForRestore, path));
   };
 
   const handleRestore = () => {

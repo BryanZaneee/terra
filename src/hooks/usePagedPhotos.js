@@ -1,6 +1,6 @@
 import { useCallback, useState, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { processPhotos } from '../utils/photoHelpers';
+import { processPhotos, errMessage } from '../utils/photoHelpers';
 import { CONFIG } from '../config';
 import { useAsyncGuard } from './useAsyncGuard';
 
@@ -29,7 +29,7 @@ export function usePagedPhotos({ setPhotos, setLoading, setError }) {
       setNextCursor(result.next_cursor ?? null);
     } catch (err) {
       console.error('Failed to load first page:', err);
-      if (setError) setError(typeof err === 'string' ? err : err?.message ?? 'Failed to load photos');
+      if (setError) setError(errMessage(err, 'Failed to load photos'));
     } finally {
       if (activeRef.current) setLoading(false);
     }

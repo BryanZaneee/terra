@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react';
+import { toggleInSet } from '../utils/photoHelpers';
 
 export function useSelection(flatVisiblePhotos) {
   const [selectedPhotos, setSelectedPhotos] = useState(new Set());
@@ -6,15 +7,7 @@ export function useSelection(flatVisiblePhotos) {
   const [lastSelectedPath, setLastSelectedPath] = useState(null);
 
   const toggleSelection = useCallback((path) => {
-    setSelectedPhotos(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(path)) {
-        newSet.delete(path);
-      } else {
-        newSet.add(path);
-      }
-      return newSet;
-    });
+    setSelectedPhotos(prev => toggleInSet(prev, path));
     setLastSelectedPath(path);
   }, []);
 

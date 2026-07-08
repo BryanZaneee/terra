@@ -8,7 +8,6 @@ use std::fs::{self, File};
 use std::io;
 use std::path::{Path, PathBuf};
 
-use serde::Serialize;
 use walkdir::WalkDir;
 use zip::ZipArchive;
 
@@ -59,37 +58,11 @@ impl ImportProvider {
     }
 }
 
-#[derive(Debug, Serialize, Clone)]
-pub struct ImportDiscovery {
-    pub provider_id: String,
-    pub provider_label: String,
-    pub source_path: String,
-    pub discovered: usize,
-    pub unsupported: usize,
-    pub staging_path: Option<String>,
-}
-
 #[derive(Debug)]
 pub struct ExportMediaCollection {
     pub media_paths: Vec<PathBuf>,
     pub unsupported_count: usize,
     pub staging_dir: Option<PathBuf>,
-}
-
-impl ExportMediaCollection {
-    pub fn discovery(&self, provider: ImportProvider, source_path: &Path) -> ImportDiscovery {
-        ImportDiscovery {
-            provider_id: provider.id().to_string(),
-            provider_label: provider.label().to_string(),
-            source_path: source_path.to_string_lossy().into_owned(),
-            discovered: self.media_paths.len(),
-            unsupported: self.unsupported_count,
-            staging_path: self
-                .staging_dir
-                .as_ref()
-                .map(|path| path.to_string_lossy().into_owned()),
-        }
-    }
 }
 
 pub fn collect_export_media(

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { errMessage } from '../utils/photoHelpers';
 import { open } from '@tauri-apps/plugin-dialog';
 import { X, Settings, FolderOpen, AlertTriangle, Sparkles, Image as ImageIcon } from 'lucide-react';
 
@@ -68,7 +69,7 @@ const SettingsModal = ({ isOpen, onClose, libraryPath, onLibraryPathChange, onPh
       setEnrichResult(count);
       onPhotosChanged?.();
     } catch (err) {
-      const msg = typeof err === 'string' ? err : err?.message ?? 'Failed to enrich metadata';
+      const msg = errMessage(err, 'Failed to enrich metadata');
       setEnrichError(msg);
     } finally {
       setEnrichRunning(false);
@@ -85,7 +86,7 @@ const SettingsModal = ({ isOpen, onClose, libraryPath, onLibraryPathChange, onPh
       setThumbResult(count);
       onPhotosChanged?.();
     } catch (err) {
-      const msg = typeof err === 'string' ? err : err?.message ?? 'Failed to generate thumbnails';
+      const msg = errMessage(err, 'Failed to generate thumbnails');
       setThumbError(msg);
     } finally {
       setThumbRunning(false);

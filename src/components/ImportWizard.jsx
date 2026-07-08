@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { errMessage } from '../utils/photoHelpers';
 import { open } from '@tauri-apps/plugin-dialog';
 import {
   AlertTriangle,
@@ -149,7 +150,7 @@ const ImportWizard = ({ isOpen, onClose, initialProviderId = 'google_photos', on
       setResult(summary);
       onImportComplete?.(summary);
     } catch (err) {
-      const message = typeof err === 'string' ? err : err?.message ?? 'Import failed';
+      const message = errMessage(err, 'Import failed');
       setError(message);
     } finally {
       setImporting(false);

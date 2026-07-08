@@ -43,3 +43,20 @@ export function formatBytes(bytes) {
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
 }
+
+/**
+ * Normalize a Tauri invoke error (string or Error) into a display message.
+ */
+export function errMessage(err, fallback) {
+  return typeof err === 'string' ? err : err?.message ?? fallback;
+}
+
+/**
+ * Return a new Set with `key` toggled in or out.
+ */
+export function toggleInSet(set, key) {
+  const next = new Set(set);
+  if (next.has(key)) next.delete(key);
+  else next.add(key);
+  return next;
+}

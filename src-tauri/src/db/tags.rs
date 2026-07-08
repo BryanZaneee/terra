@@ -8,6 +8,16 @@ pub struct Tag {
     pub count: i64,
 }
 
+/// Map a `(id, name, color, count)` row to a Tag.
+fn tag_from_row(row: &rusqlite::Row) -> rusqlite::Result<Tag> {
+    Ok(Tag {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        color: row.get(2)?,
+        count: row.get(3)?,
+    })
+}
+
 /// Create a new tag
 pub fn create_tag(conn: &Connection, name: &str, color: &str) -> SqlResult<i64> {
     conn.execute(
@@ -36,12 +46,7 @@ pub fn get_all_tags(conn: &Connection) -> SqlResult<Vec<Tag>> {
          GROUP BY t.id
          ORDER BY count DESC, t.name ASC"
     )?;
-    let rows = stmt.query_map([], |row| Ok(Tag {
-        id: row.get(0)?,
-        name: row.get(1)?,
-        color: row.get(2)?,
-        count: row.get(3)?,
-    }))?;
+    let rows = stmt.query_map([], tag_from_row)?;
     rows.collect()
 }
 
@@ -54,12 +59,7 @@ pub fn get_tags_for_photo(conn: &Connection, path: &str) -> SqlResult<Vec<Tag>> 
          WHERE pt.photo_path = ?1
          ORDER BY t.name ASC"
     )?;
-    let rows = stmt.query_map(params![path], |row| Ok(Tag {
-        id: row.get(0)?,
-        name: row.get(1)?,
-        color: row.get(2)?,
-        count: row.get(3)?,
-    }))?;
+    let rows = stmt.query_map(params![path], tag_from_row)?;
     rows.collect()
 }
 
@@ -98,11 +98,6 @@ pub fn search_tags(conn: &Connection, query: &str) -> SqlResult<Vec<Tag>> {
          ORDER BY count DESC, t.name ASC
          LIMIT 10"
     )?;
-    let rows = stmt.query_map(params![search_term], |row| Ok(Tag {
-        id: row.get(0)?,
-        name: row.get(1)?,
-        color: row.get(2)?,
-        count: row.get(3)?,
-    }))?;
+    let rows = stmt.query_map(params![search_term], tag_from_row)?;
     rows.collect()
 }

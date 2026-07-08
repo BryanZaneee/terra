@@ -58,7 +58,7 @@ const AppLayout = () => {
 
   const {
     viewMode, setViewMode, cycleViewMode, searchQuery, handleSearch,
-    smartCollections, loadSmartCollections,
+    smartCollections,
     groupedPhotos, flatVisiblePhotos, expandedGroups, toggleGroup,
     groupCountHints, partialGroupCounts,
     unreviewedCount, setUnreviewedCount,
@@ -183,7 +183,7 @@ const AppLayout = () => {
         selectedTagIds={selectedTagIds}
         setSelectedTagIds={setSelectedTagIds}
         smartCollections={smartCollections}
-        loadSmartCollections={loadSmartCollections}
+        refreshCounts={refreshCounts}
         unreviewedCount={unreviewedCount}
         loading={loading}
         uploadStatus={uploadStatus}

@@ -7,20 +7,11 @@ import { PhotoTagBar } from './TagManager';
 import VideoPlayer from './VideoPlayer';
 import Tooltip from './Tooltip';
 import { useFocusTrap } from '../hooks/useFocusTrap';
+import { formatBytes } from '../utils/photoHelpers';
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
-function humanFileSize(bytes) {
-  if (!bytes || bytes === 0) return '—';
-  const units = ['B', 'KB', 'MB', 'GB'];
-  let i = 0;
-  let val = bytes;
-  while (val >= 1024 && i < units.length - 1) {
-    val /= 1024;
-    i++;
-  }
-  return `${val.toFixed(1)} ${units[i]}`;
-}
+const humanFileSize = (bytes) => (bytes ? formatBytes(bytes) : '—');
 
 function formatShutter(us) {
   if (!us || us <= 0) return null;

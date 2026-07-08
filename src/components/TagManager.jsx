@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { X, Plus, Search, Tag, Check } from 'lucide-react';
+import { toggleInSet } from '../utils/photoHelpers';
 
 const TAG_COLORS = [
   { name: 'Red', value: '#ef4444' },
@@ -144,13 +145,7 @@ export const TagAssignPopover = ({ isOpen, onClose, photoPaths, onTagsChanged })
   if (!isOpen) return null;
 
   const toggleTag = (tagId) => {
-    const newSet = new Set(selectedTagIds);
-    if (newSet.has(tagId)) {
-      newSet.delete(tagId);
-    } else {
-      newSet.add(tagId);
-    }
-    setSelectedTagIds(newSet);
+    setSelectedTagIds(toggleInSet(selectedTagIds, tagId));
   };
 
   const handleApply = async () => {

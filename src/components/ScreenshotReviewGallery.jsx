@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { X, MonitorSmartphone, CheckCircle, RotateCcw, Archive } from 'lucide-react';
+import ConfirmDialog from './ConfirmDialog';
+import { toggleInSet } from '../utils/photoHelpers';
 
 const ScreenshotReviewGallery = ({ isOpen, onClose, screenshots, onArchive, onRefresh }) => {
   const [selectedForArchive, setSelectedForArchive] = useState(new Set());
@@ -9,13 +11,7 @@ const ScreenshotReviewGallery = ({ isOpen, onClose, screenshots, onArchive, onRe
   if (!isOpen) return null;
 
   const togglePhotoSelection = (path) => {
-    const newSet = new Set(selectedForArchive);
-    if (newSet.has(path)) {
-      newSet.delete(path);
-    } else {
-      newSet.add(path);
-    }
-    setSelectedForArchive(newSet);
+    setSelectedForArchive(toggleInSet(selectedForArchive, path));
   };
 
   const selectAll = () => {
@@ -137,28 +133,13 @@ const ScreenshotReviewGallery = ({ isOpen, onClose, screenshots, onArchive, onRe
       </div>
 
       {showConfirm && (
-        <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/80">
-          <div className="bg-[#1a1a1a] border border-white/10 p-6 rounded-xl w-full max-w-md">
-            <h3 className="text-xl font-bold text-white mb-2">Archive Screenshots?</h3>
-            <p className="text-white/60 text-sm mb-4">
-              {selectedForArchive.size} screenshots will be moved to archive and permanently deleted after 14 days.
-            </p>
-            <div className="flex justify-end gap-3">
-              <button
-                onClick={() => setShowConfirm(false)}
-                className="px-4 py-2 text-sm text-white/60 hover:text-white transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={confirmArchive}
-                className="px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg text-sm font-medium transition-colors"
-              >
-                Archive
-              </button>
-            </div>
-          </div>
-        </div>
+        <ConfirmDialog
+          title="Archive Screenshots?"
+          message={`${selectedForArchive.size} screenshots will be moved to archive and permanently deleted after 14 days.`}
+          confirmLabel="Archive"
+          onConfirm={confirmArchive}
+          onCancel={() => setShowConfirm(false)}
+        />
       )}
     </div>
   );

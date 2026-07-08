@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { CONFIG } from '../config';
+import { errMessage } from '../utils/photoHelpers';
 import { usePagedPhotos } from './usePagedPhotos';
 import { useAsyncGuard } from './useAsyncGuard';
 
@@ -71,7 +72,7 @@ export function usePhotos({ refreshCounts } = {}) {
 
       setStatusWithTimeout(`Successfully uploaded ${uploaded.length} photos!`);
     } catch (err) {
-      setError(typeof err === 'string' ? err : err?.message ?? 'Failed to upload photos');
+      setError(errMessage(err, 'Failed to upload photos'));
       console.error('Upload error:', err);
       setUploadStatus('');
     } finally {
@@ -106,7 +107,7 @@ export function usePhotos({ refreshCounts } = {}) {
       await reloadCurrentView();
     } catch (err) {
       console.error("Failed to delete photos:", err);
-      setError(typeof err === 'string' ? err : err?.message ?? 'Failed to delete items');
+      setError(errMessage(err, 'Failed to delete items'));
     }
   }, [reloadCurrentView, refreshCounts]);
 

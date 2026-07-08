@@ -239,14 +239,13 @@ async fn import_provider_export(
 
     let collection = collect_export_media(provider, &source)?;
     let staging_dir = collection.staging_dir.clone();
-    let discovery = collection.discovery(provider, &source);
 
     let _ = window.emit(
         "provider_import_progress",
         ProviderImportProgress {
             provider_id: provider.id().to_string(),
             provider_label: provider.label().to_string(),
-            total: discovery.discovered,
+            total: collection.media_paths.len(),
             processed: 0,
             imported: 0,
             skipped_duplicates: 0,
@@ -836,54 +835,54 @@ fn get_screenshots() -> Result<Vec<PhotoMetadata>, String> {
     with_db("Failed to get screenshots", |c| db::get_screenshots(c))
 }
 
-/// COMMAND: Archive photos (move to archive folder, set archived_at)
-#[tauri::command]
-fn archive_photos(paths: Vec<String>) -> Result<(), String> {
+/// Move photos between the library and archive roots, mirroring the relative
+/// directory structure and updating the DB path plus archived_at via `db_op`.
+/// Shared body of archive_photos / restore_photos — only the direction differs.
+fn move_photos_between_roots(
+    paths: Vec<String>,
+    from_root: &Path,
+    to_root: &Path,
+    db_op: impl Fn(&rusqlite::Connection, &str) -> rusqlite::Result<()>,
+    action: &str,
+) -> Result<(), String> {
     let conn = db_conn()?;
-    let archive_path = db::get_archive_path();
 
     for path_str in paths {
         let source = Path::new(&path_str);
         if !source.exists() {
-            warn!("File not found for archiving: {}", path_str);
+            warn!("File not found for {}: {}", action, path_str);
             continue;
         }
 
-        // Create relative path structure in archive
-        let library_path = db::get_library_path();
-        let relative_path = source.strip_prefix(&library_path)
+        let relative_path = source.strip_prefix(from_root)
             .unwrap_or(Path::new(source.file_name().unwrap_or_default()));
 
-        let mut dest = archive_path.clone();
+        let mut dest = to_root.to_path_buf();
         if let Some(parent) = relative_path.parent() {
             dest.push(parent);
             fs::create_dir_all(&dest).ok();
         }
         dest.push(relative_path.file_name().unwrap_or_default());
 
-        // Move file to archive
-        match fs::rename(&source, &dest) {
+        match fs::rename(source, &dest) {
             Ok(_) => {
-                // Update database with new path and archived_at timestamp
                 let canonical_dest = dest.canonicalize()
                     .unwrap_or(dest.clone())
                     .to_string_lossy()
                     .to_string();
 
-                // First update the path in the database
+                // Update the path first, then flip archived_at via db_op.
                 let _ = conn.execute(
                     "UPDATE photos SET path = ?1 WHERE path = ?2",
                     rusqlite::params![canonical_dest, path_str],
                 );
+                db_op(&conn, &canonical_dest)
+                    .map_err(|e| format!("Failed to {} in DB: {}", action, e))?;
 
-                // Then set archived_at
-                db::archive_photo(&conn, &canonical_dest)
-                    .map_err(|e| format!("Failed to archive in DB: {}", e))?;
-
-                debug!("Archived: {} -> {}", path_str, canonical_dest);
+                debug!("{}: {} -> {}", action, path_str, canonical_dest);
             }
             Err(e) => {
-                error!("Failed to move file to archive: {}", e);
+                error!("Failed to move file during {}: {}", action, e);
             }
         }
     }
@@ -891,58 +890,28 @@ fn archive_photos(paths: Vec<String>) -> Result<(), String> {
     Ok(())
 }
 
+/// COMMAND: Archive photos (move to archive folder, set archived_at)
+#[tauri::command]
+fn archive_photos(paths: Vec<String>) -> Result<(), String> {
+    move_photos_between_roots(
+        paths,
+        &db::get_library_path(),
+        &db::get_archive_path(),
+        db::archive_photo,
+        "archive",
+    )
+}
+
 /// COMMAND: Restore photos from archive
 #[tauri::command]
 fn restore_photos(paths: Vec<String>) -> Result<(), String> {
-    let conn = db_conn()?;
-    let library_path = db::get_library_path();
-    let archive_path = db::get_archive_path();
-
-    for path_str in paths {
-        let source = Path::new(&path_str);
-        if !source.exists() {
-            warn!("File not found for restoration: {}", path_str);
-            continue;
-        }
-
-        // Restore to original location in library
-        let relative_path = source.strip_prefix(&archive_path)
-            .unwrap_or(Path::new(source.file_name().unwrap_or_default()));
-
-        let mut dest = library_path.clone();
-        if let Some(parent) = relative_path.parent() {
-            dest.push(parent);
-            fs::create_dir_all(&dest).ok();
-        }
-        dest.push(relative_path.file_name().unwrap_or_default());
-
-        // Move file back to library
-        match fs::rename(&source, &dest) {
-            Ok(_) => {
-                let canonical_dest = dest.canonicalize()
-                    .unwrap_or(dest.clone())
-                    .to_string_lossy()
-                    .to_string();
-
-                // Update path in database
-                let _ = conn.execute(
-                    "UPDATE photos SET path = ?1 WHERE path = ?2",
-                    rusqlite::params![canonical_dest, path_str],
-                );
-
-                // Clear archived_at
-                db::restore_photo(&conn, &canonical_dest)
-                    .map_err(|e| format!("Failed to restore in DB: {}", e))?;
-
-                debug!("Restored: {} -> {}", path_str, canonical_dest);
-            }
-            Err(e) => {
-                error!("Failed to restore file: {}", e);
-            }
-        }
-    }
-
-    Ok(())
+    move_photos_between_roots(
+        paths,
+        &db::get_archive_path(),
+        &db::get_library_path(),
+        db::restore_photo,
+        "restore",
+    )
 }
 
 /// COMMAND: Get archived photos with days until deletion
@@ -1099,10 +1068,10 @@ fn set_library_path(path: String) -> Result<(), String> {
 // Smart Collections Commands
 // ============================================================================
 
-/// COMMAND: Get all smart collections with counts
+/// COMMAND: Get smart collection metadata. Counts come from get_view_counts.
 #[tauri::command]
-fn get_smart_collections() -> Result<Vec<db::SmartCollection>, String> {
-    with_db("Failed to get smart collections", |c| db::get_smart_collections(c))
+fn get_smart_collections() -> &'static [db::SmartCollection] {
+    db::SMART_COLLECTIONS
 }
 
 // ============================================================================

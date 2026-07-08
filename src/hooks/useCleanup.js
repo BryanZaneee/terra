@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { CONFIG } from '../config';
+import { errMessage } from '../utils/photoHelpers';
 
 export function useCleanup({ reloadCurrentView, setStatusWithTimeout, setError, refreshCounts }) {
   const [showDuplicateScan, setShowDuplicateScan] = useState(false);
@@ -39,7 +40,7 @@ export function useCleanup({ reloadCurrentView, setStatusWithTimeout, setError, 
     } catch (err) {
       console.error("Failed to scan for duplicates:", err);
       setShowDuplicateScan(false);
-      setError(typeof err === 'string' ? err : err?.message ?? 'Failed to scan for duplicates');
+      setError(errMessage(err, 'Failed to scan for duplicates'));
     } finally {
       unlisten();
     }
@@ -67,7 +68,7 @@ export function useCleanup({ reloadCurrentView, setStatusWithTimeout, setError, 
     } catch (err) {
       console.error("Failed to scan for screenshots:", err);
       setShowScreenshotScan(false);
-      setError(typeof err === 'string' ? err : err?.message ?? 'Failed to scan for screenshots');
+      setError(errMessage(err, 'Failed to scan for screenshots'));
     } finally {
       unlisten();
     }
@@ -94,7 +95,7 @@ export function useCleanup({ reloadCurrentView, setStatusWithTimeout, setError, 
       }
     } catch (err) {
       console.error("Failed to archive photos:", err);
-      setError(typeof err === 'string' ? err : err?.message ?? 'Failed to archive photos');
+      setError(errMessage(err, 'Failed to archive photos'));
     }
   }, [reloadCurrentView, setStatusWithTimeout, setError, refreshCounts, showDuplicateReview, showScreenshotReview]);
 
@@ -107,7 +108,7 @@ export function useCleanup({ reloadCurrentView, setStatusWithTimeout, setError, 
       refreshCounts?.();
     } catch (err) {
       console.error("Failed to restore photos:", err);
-      setError(typeof err === 'string' ? err : err?.message ?? 'Failed to restore photos');
+      setError(errMessage(err, 'Failed to restore photos'));
     }
   }, [reloadCurrentView, setStatusWithTimeout, setError, refreshCounts]);
 

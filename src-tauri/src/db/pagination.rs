@@ -11,11 +11,21 @@ const IS_VIDEO_SQL: &str = "(LOWER(p.name) LIKE '%.mp4' OR \
      LOWER(p.name) LIKE '%.mkv')";
 
 /// Same fragment but using the bare `photos` table (no alias).
-const IS_VIDEO_SQL_UNALIASED: &str = "(LOWER(name) LIKE '%.mp4' OR \
+pub(crate) const IS_VIDEO_SQL_UNALIASED: &str = "(LOWER(name) LIKE '%.mp4' OR \
      LOWER(name) LIKE '%.mov' OR \
      LOWER(name) LIKE '%.avi' OR \
      LOWER(name) LIKE '%.webm' OR \
      LOWER(name) LIKE '%.mkv')";
+
+/// True for known photo extensions (bare `photos` table). Used by analytics;
+/// note this is an explicit allowlist, not simply `NOT video`.
+pub(crate) const IS_PHOTO_SQL_UNALIASED: &str = "(LOWER(name) LIKE '%.jpg' OR \
+     LOWER(name) LIKE '%.jpeg' OR \
+     LOWER(name) LIKE '%.png' OR \
+     LOWER(name) LIKE '%.heic' OR \
+     LOWER(name) LIKE '%.webp' OR \
+     LOWER(name) LIKE '%.gif' OR \
+     LOWER(name) LIKE '%.bmp')";
 
 const PAGINATED_SELECT: &str =
     "p.path, p.name, p.date_taken, p.width, p.height, p.is_favorite, p.content_hash, \
@@ -52,7 +62,7 @@ fn tags_filter_sql(ids: &[i64], match_all: bool) -> FilterSql {
         return FilterSql::simple("1 = 0");
     }
     let placeholders = (0..ids.len()).map(|_| "?").collect::<Vec<_>>().join(",");
-    let mut params: Vec<Box<dyn rusqlite::ToSql>> =
+    let params: Vec<Box<dyn rusqlite::ToSql>> =
         ids.iter().map(|id| Box::new(*id) as Box<dyn rusqlite::ToSql>).collect();
     let (having, having_params) = if match_all {
         (
@@ -268,10 +278,7 @@ pub fn get_view_counts(conn: &Connection) -> SqlResult<ViewCounts> {
         counts.by_tag.insert(k, v);
     }
 
-    for id in [
-        "size_large", "size_medium", "size_small", "dim_4k", "dim_hd", "dim_portrait",
-        "dim_landscape", "time_7days", "time_30days", "time_year", "status_unreviewed",
-    ] {
+    for id in super::SMART_COLLECTIONS.iter().map(|c| c.id) {
         let f = smart_collection_filter_sql(id);
         let sql = format!("SELECT COUNT(*) FROM photos p WHERE {}", f.clause);
         let count: i64 = conn.query_row(

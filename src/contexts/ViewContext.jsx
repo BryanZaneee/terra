@@ -13,13 +13,13 @@ const REGULAR_VIEWS = ['all', 'year', 'month', 'photos', 'videos', 'favorites', 
 export function ViewProvider({ children }) {
   const {
     photos, setPhotos, setLoading, loadPhotosFromDatabase,
-    selectedTagIds, setSelectedTagIds,
+    selectedTagIds, setSelectedTagIds, counts,
   } = useAppContext();
 
   const [viewMode, setViewMode] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [locations, setLocations] = useState([]);
-  const [smartCollections, setSmartCollections] = useState([]);
+  const [smartCollectionMeta, setSmartCollectionMeta] = useState([]);
   const [expandedGroups, setExpandedGroups] = useState({});
   const [unreviewedCount, setUnreviewedCount] = useState(0);
 
@@ -53,11 +53,20 @@ export function ViewProvider({ children }) {
 
   const loadSmartCollections = async () => {
     try {
-      setSmartCollections(await invoke('get_smart_collections'));
+      setSmartCollectionMeta(await invoke('get_smart_collections'));
     } catch (err) {
       console.error('Failed to load smart collections:', err);
     }
   };
+
+  // Static metadata from the backend + live counts from the view-count cache.
+  const smartCollections = useMemo(
+    () => smartCollectionMeta.map((c) => ({
+      ...c,
+      count: counts?.by_smart_collection?.[c.id] ?? 0,
+    })),
+    [smartCollectionMeta, counts],
+  );
 
   const handleSearch = (query) => {
     setSearchQuery(query);
@@ -130,7 +139,6 @@ export function ViewProvider({ children }) {
     handleSearch,
     loadLocations,
     smartCollections,
-    loadSmartCollections,
     groupedPhotos,
     groupCountHints,
     partialGroupCounts,

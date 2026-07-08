@@ -1,4 +1,5 @@
 use rusqlite::{Connection, Result as SqlResult, params};
+use super::pagination::{IS_PHOTO_SQL_UNALIASED, IS_VIDEO_SQL_UNALIASED};
 
 #[derive(serde::Serialize)]
 pub struct StorageAnalytics {
@@ -48,19 +49,13 @@ pub fn get_storage_analytics(conn: &Connection) -> SqlResult<StorageAnalytics> {
 
     // Total counts
     let total_photos: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM photos WHERE archived_at IS NULL AND (
-            LOWER(name) LIKE '%.jpg' OR LOWER(name) LIKE '%.jpeg' OR LOWER(name) LIKE '%.png' OR
-            LOWER(name) LIKE '%.heic' OR LOWER(name) LIKE '%.webp' OR LOWER(name) LIKE '%.gif' OR LOWER(name) LIKE '%.bmp'
-        )",
+        &format!("SELECT COUNT(*) FROM photos WHERE archived_at IS NULL AND {IS_PHOTO_SQL_UNALIASED}"),
         [],
         |row| row.get(0),
     ).unwrap_or(0);
 
     let total_videos: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM photos WHERE archived_at IS NULL AND (
-            LOWER(name) LIKE '%.mp4' OR LOWER(name) LIKE '%.mov' OR LOWER(name) LIKE '%.avi' OR
-            LOWER(name) LIKE '%.webm' OR LOWER(name) LIKE '%.mkv'
-        )",
+        &format!("SELECT COUNT(*) FROM photos WHERE archived_at IS NULL AND {IS_VIDEO_SQL_UNALIASED}"),
         [],
         |row| row.get(0),
     ).unwrap_or(0);
@@ -73,19 +68,13 @@ pub fn get_storage_analytics(conn: &Connection) -> SqlResult<StorageAnalytics> {
 
     // Size by media type
     let photos_size: i64 = conn.query_row(
-        "SELECT COALESCE(SUM(file_size), 0) FROM photos WHERE archived_at IS NULL AND (
-            LOWER(name) LIKE '%.jpg' OR LOWER(name) LIKE '%.jpeg' OR LOWER(name) LIKE '%.png' OR
-            LOWER(name) LIKE '%.heic' OR LOWER(name) LIKE '%.webp' OR LOWER(name) LIKE '%.gif' OR LOWER(name) LIKE '%.bmp'
-        )",
+        &format!("SELECT COALESCE(SUM(file_size), 0) FROM photos WHERE archived_at IS NULL AND {IS_PHOTO_SQL_UNALIASED}"),
         [],
         |row| row.get(0),
     ).unwrap_or(0);
 
     let videos_size: i64 = conn.query_row(
-        "SELECT COALESCE(SUM(file_size), 0) FROM photos WHERE archived_at IS NULL AND (
-            LOWER(name) LIKE '%.mp4' OR LOWER(name) LIKE '%.mov' OR LOWER(name) LIKE '%.avi' OR
-            LOWER(name) LIKE '%.webm' OR LOWER(name) LIKE '%.mkv'
-        )",
+        &format!("SELECT COALESCE(SUM(file_size), 0) FROM photos WHERE archived_at IS NULL AND {IS_VIDEO_SQL_UNALIASED}"),
         [],
         |row| row.get(0),
     ).unwrap_or(0);

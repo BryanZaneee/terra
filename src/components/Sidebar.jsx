@@ -21,7 +21,7 @@ const Sidebar = ({
   selectedTagIds,
   setSelectedTagIds,
   smartCollections,
-  loadSmartCollections,
+  refreshCounts,
   unreviewedCount,
   loading,
   uploadStatus,
@@ -200,7 +200,7 @@ const Sidebar = ({
               onScanFileSizes={async () => {
                 try {
                   await invoke('populate_file_sizes');
-                  loadSmartCollections();
+                  refreshCounts();
                 } catch (err) {
                   console.error('Failed to scan file sizes:', err);
                 }
