@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { X, Plus, Search, Tag, Trash2, Edit3, Check } from 'lucide-react';
+import { X, Plus, Search, Tag, Check } from 'lucide-react';
 
 const TAG_COLORS = [
   { name: 'Red', value: '#ef4444' },
@@ -357,4 +357,3 @@ export const PhotoTagBar = ({ photoPath }) => {
   );
 };
 
-export default { TagCreateModal, TagAssignPopover, PhotoTagBar };

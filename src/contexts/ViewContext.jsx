@@ -128,7 +128,6 @@ export function ViewProvider({ children }) {
     cycleViewMode,
     searchQuery,
     handleSearch,
-    locations,
     loadLocations,
     smartCollections,
     loadSmartCollections,

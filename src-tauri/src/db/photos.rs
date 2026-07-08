@@ -1,6 +1,5 @@
 use rusqlite::{Connection, Result as SqlResult, params};
 use crate::PhotoMetadata;
-use super::row::{photo_from_row, PHOTO_COLUMNS};
 
 pub fn insert_photo(conn: &Connection, photo: &PhotoMetadata, source_type: &str) -> SqlResult<()> {
     conn.execute(
@@ -24,14 +23,6 @@ pub fn insert_photo(conn: &Connection, photo: &PhotoMetadata, source_type: &str)
     Ok(())
 }
 
-/// Get all photos from the database, sorted by date_taken descending
-pub fn get_all_photos(conn: &Connection) -> SqlResult<Vec<PhotoMetadata>> {
-    let query = format!("SELECT {} FROM photos ORDER BY date_taken DESC", PHOTO_COLUMNS);
-    let mut stmt = conn.prepare(&query)?;
-    let rows = stmt.query_map([], photo_from_row)?;
-    rows.collect()
-}
-
 /// Delete a photo from the database
 pub fn delete_photo(conn: &Connection, path: &str) -> SqlResult<()> {
     conn.execute("DELETE FROM photos WHERE path = ?1", params![path])?;
@@ -45,20 +36,6 @@ pub fn set_photo_favorite(conn: &Connection, path: &str, is_favorite: bool) -> S
         params![if is_favorite { 1 } else { 0 }, path],
     )?;
     Ok(())
-}
-/// Get all photos that have duplicates (same content_hash)
-pub fn get_duplicates(conn: &Connection) -> SqlResult<Vec<PhotoMetadata>> {
-    let query = format!(
-        "SELECT {} FROM photos \
-         WHERE content_hash IN ( \
-             SELECT content_hash FROM photos GROUP BY content_hash HAVING COUNT(*) > 1 \
-         ) \
-         ORDER BY content_hash, date_taken DESC",
-        PHOTO_COLUMNS
-    );
-    let mut stmt = conn.prepare(&query)?;
-    let rows = stmt.query_map([], photo_from_row)?;
-    rows.collect()
 }
 
 /// Get all unique locations with photo counts

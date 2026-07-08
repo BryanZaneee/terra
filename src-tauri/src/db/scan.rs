@@ -29,15 +29,6 @@ pub fn update_photo_screenshot_flag(conn: &Connection, path: &str, is_screenshot
     Ok(())
 }
 
-/// Get all non-archived photos with their dhash values for duplicate detection
-pub fn get_all_photos_with_dhash(conn: &Connection) -> SqlResult<Vec<(String, Option<i64>, Option<String>)>> {
-    let mut stmt = conn.prepare(
-        "SELECT path, dhash_64, content_hash FROM photos WHERE archived_at IS NULL ORDER BY date_taken DESC"
-    )?;
-    let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
-    rows.collect()
-}
-
 /// Single-query duplicate scan input: full metadata + perceptual hash.
 pub fn get_active_photos_for_duplicate_scan(
     conn: &Connection,

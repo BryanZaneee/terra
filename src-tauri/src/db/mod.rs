@@ -65,13 +65,18 @@ mod tests {
     // Photos tests
     // ====================================================================
 
+    /// Fetch every photo via the paginated path — the only read path left.
+    fn all_photos(conn: &Connection) -> Vec<PhotoMetadata> {
+        get_photos_page(conn, &ViewFilter::All, None, 1000).unwrap().photos
+    }
+
     #[test]
-    fn test_insert_and_get_all_photos() {
+    fn test_insert_and_read_back() {
         let conn = setup_db();
         let photo = test_photo("/photos/test.jpg", "test.jpg");
         insert_photo(&conn, &photo, "upload").unwrap();
 
-        let photos = get_all_photos(&conn).unwrap();
+        let photos = all_photos(&conn);
         assert_eq!(photos.len(), 1);
         assert_eq!(photos[0].path, "/photos/test.jpg");
         assert_eq!(photos[0].name, "test.jpg");
@@ -83,10 +88,10 @@ mod tests {
         let conn = setup_db();
         let photo = test_photo("/photos/delete_me.jpg", "delete_me.jpg");
         insert_photo(&conn, &photo, "upload").unwrap();
-        assert_eq!(get_all_photos(&conn).unwrap().len(), 1);
+        assert_eq!(all_photos(&conn).len(), 1);
 
         delete_photo(&conn, "/photos/delete_me.jpg").unwrap();
-        assert_eq!(get_all_photos(&conn).unwrap().len(), 0);
+        assert_eq!(all_photos(&conn).len(), 0);
     }
 
     // ====================================================================
@@ -100,7 +105,7 @@ mod tests {
         insert_photo(&conn, &photo, "upload").unwrap();
 
         set_photo_favorite(&conn, "/photos/fav.jpg", true).unwrap();
-        let photos = get_all_photos(&conn).unwrap();
+        let photos = all_photos(&conn);
         assert!(photos[0].is_favorite);
     }
 
@@ -112,7 +117,7 @@ mod tests {
 
         set_photo_favorite(&conn, "/photos/fav2.jpg", true).unwrap();
         set_photo_favorite(&conn, "/photos/fav2.jpg", false).unwrap();
-        let photos = get_all_photos(&conn).unwrap();
+        let photos = all_photos(&conn);
         assert!(!photos[0].is_favorite);
     }
 
@@ -146,49 +151,6 @@ mod tests {
         assert_eq!(result.photos[0].path, "/photos/album_pic.jpg");
     }
 
-    #[test]
-    fn test_remove_photo_from_album() {
-        let conn = setup_db();
-        let photo = test_photo("/photos/remove_me.jpg", "remove_me.jpg");
-        insert_photo(&conn, &photo, "upload").unwrap();
-
-        let album_id = create_album(&conn, "Temp").unwrap();
-        add_photo_to_album(&conn, album_id, "/photos/remove_me.jpg").unwrap();
-        let before = get_photos_page(&conn, &ViewFilter::Album { id: album_id }, None, 50).unwrap();
-        assert_eq!(before.photos.len(), 1);
-
-        remove_photo_from_album(&conn, album_id, "/photos/remove_me.jpg").unwrap();
-        let after = get_photos_page(&conn, &ViewFilter::Album { id: album_id }, None, 50).unwrap();
-        assert_eq!(after.photos.len(), 0);
-    }
-
-    #[test]
-    fn test_delete_album_cascade() {
-        let conn = setup_db();
-        let photo = test_photo("/photos/cascade.jpg", "cascade.jpg");
-        insert_photo(&conn, &photo, "upload").unwrap();
-
-        let album_id = create_album(&conn, "ToDelete").unwrap();
-        add_photo_to_album(&conn, album_id, "/photos/cascade.jpg").unwrap();
-
-        delete_album(&conn, album_id).unwrap();
-        let albums = get_albums(&conn).unwrap();
-        assert_eq!(albums.len(), 0);
-    }
-
-    #[test]
-    fn test_set_album_cover() {
-        let conn = setup_db();
-        let photo = test_photo("/photos/cover.jpg", "cover.jpg");
-        insert_photo(&conn, &photo, "upload").unwrap();
-
-        let album_id = create_album(&conn, "WithCover").unwrap();
-        set_album_cover(&conn, album_id, "/photos/cover.jpg").unwrap();
-
-        let albums = get_albums(&conn).unwrap();
-        assert_eq!(albums[0].cover_photo_path.as_deref(), Some("/photos/cover.jpg"));
-    }
-
     // ====================================================================
     // Tags tests
     // ====================================================================
@@ -216,16 +178,6 @@ mod tests {
         let tags = get_all_tags(&conn).unwrap();
         assert_eq!(tags[0].name, "new_name");
         assert_eq!(tags[0].color, "#ff0000");
-    }
-
-    #[test]
-    fn test_delete_tag() {
-        let conn = setup_db();
-        let tag_id = create_tag(&conn, "temporary", "#123456").unwrap();
-        assert_eq!(get_all_tags(&conn).unwrap().len(), 1);
-
-        delete_tag(&conn, tag_id).unwrap();
-        assert_eq!(get_all_tags(&conn).unwrap().len(), 0);
     }
 
     #[test]

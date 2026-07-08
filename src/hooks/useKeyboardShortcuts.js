@@ -8,17 +8,14 @@ function isTextInput(target) {
 export function useKeyboardShortcuts({
   onFocusSearch,
   onCycleViewMode,
-  onCloseTopModal,
   enabled = true,
 }) {
   // Refs prevent re-attaching the listener on every render when callbacks change.
   const onFocusSearchRef = useRef(onFocusSearch);
   const onCycleViewModeRef = useRef(onCycleViewMode);
-  const onCloseTopModalRef = useRef(onCloseTopModal);
 
   useEffect(() => { onFocusSearchRef.current = onFocusSearch; }, [onFocusSearch]);
   useEffect(() => { onCycleViewModeRef.current = onCycleViewMode; }, [onCycleViewMode]);
-  useEffect(() => { onCloseTopModalRef.current = onCloseTopModal; }, [onCloseTopModal]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -34,8 +31,6 @@ export function useKeyboardShortcuts({
         onFocusSearchRef.current?.();
       } else if (key === 'g' || key === 'G') {
         onCycleViewModeRef.current?.();
-      } else if (key === 'Escape') {
-        onCloseTopModalRef.current?.();
       }
     }
 

@@ -1,6 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+import { render } from '@testing-library/react';
 import VideoPlayer from './VideoPlayer';
 
 describe('VideoPlayer', () => {
@@ -29,10 +28,5 @@ describe('VideoPlayer', () => {
       <VideoPlayer src="asset://localhost/video.mp4" />
     );
     expect(container.querySelector('input[type="range"]')).toBeInTheDocument();
-  });
-
-  it('renders CC button', () => {
-    render(<VideoPlayer src="asset://localhost/video.mp4" />);
-    expect(screen.getByText('CC')).toBeInTheDocument();
   });
 });

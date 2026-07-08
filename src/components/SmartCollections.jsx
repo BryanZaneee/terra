@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import {
   HardDrive, Monitor, Calendar, Smartphone, EyeOff,
   ChevronDown, ChevronRight

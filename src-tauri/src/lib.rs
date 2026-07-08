@@ -8,7 +8,6 @@ use rayon::prelude::*;
 use reverse_geocoder::ReverseGeocoder;
 use serde::{Deserialize, Serialize};
 use tauri::Emitter;
-use walkdir::WalkDir;
 use log::{debug, error, info, warn};
 
 mod db;
@@ -200,53 +199,6 @@ pub struct ViewCounts {
     pub by_album: HashMap<String, i64>,
     pub by_tag: HashMap<String, i64>,
     pub by_smart_collection: HashMap<String, i64>,
-}
-
-#[tauri::command]
-fn scan_directory(dir_path: String, save_to_db: bool) -> Result<Vec<PhotoMetadata>, String> {
-    info!("Scanning directory: {}", dir_path);
-
-    // Use cached geocoder locations for better performance
-    let geocoder = ReverseGeocoder::new(&GEOCODER_LOCATIONS);
-
-    // 1. Collect all image paths efficiently
-    let entries: Vec<_> = WalkDir::new(&dir_path)
-        .into_iter()
-        .filter_map(|e| e.ok())
-        .filter(|e| {
-            let path = e.path();
-            if !path.is_file() {
-                return false;
-            }
-            let ext = path.extension()
-                .and_then(|s| s.to_str())
-                .unwrap_or("")
-                .to_lowercase();
-            matches!(ext.as_str(), "jpg" | "jpeg" | "png" | "heic" | "webp" | "gif" | "bmp" | "mp4" | "mov" | "avi" | "webm" | "mkv")
-        })
-        .collect();
-
-    info!("Found {} image files", entries.len());
-
-    // 2. Process metadata in parallel using Rayon
-    let photos: Vec<PhotoMetadata> = entries
-        .par_iter()
-        .filter_map(|entry| process_image(entry.path(), Some(&geocoder)))
-        .collect();
-
-    info!("Successfully processed {} photos", photos.len());
-
-    // 3. Optionally save to database
-    if save_to_db {
-        let conn = db_conn()?;
-        for photo in &photos {
-            db::insert_photo(&conn, photo, "scan")
-                .map_err(|e| format!("Failed to insert photo: {}", e))?;
-        }
-        info!("Saved {} photos to database", photos.len());
-    }
-
-    Ok(photos)
 }
 
 /// COMMAND: Upload Photos
@@ -548,11 +500,6 @@ fn create_album(name: String) -> Result<i64, String> {
 }
 
 #[tauri::command]
-fn delete_album(id: i64) -> Result<(), String> {
-    with_db("Failed to delete album", |c| db::delete_album(c, id))
-}
-
-#[tauri::command]
 fn get_albums() -> Result<Vec<db::Album>, String> {
     with_db("Failed to get albums", |c| db::get_albums(c))
 }
@@ -564,20 +511,6 @@ fn add_to_album(album_id: i64, photo_paths: Vec<String>) -> Result<(), String> {
         db::add_photo_to_album(&conn, album_id, &path).map_err(|e| format!("Failed to add to album: {}", e))?;
     }
     Ok(())
-}
-
-#[tauri::command]
-fn remove_from_album(album_id: i64, photo_paths: Vec<String>) -> Result<(), String> {
-    let conn = db_conn()?;
-    for path in photo_paths {
-        db::remove_photo_from_album(&conn, album_id, &path).map_err(|e| format!("Failed to remove from album: {}", e))?;
-    }
-    Ok(())
-}
-
-#[tauri::command]
-fn set_album_cover(album_id: i64, photo_path: String) -> Result<(), String> {
-    with_db("Failed to set album cover", |c| db::set_album_cover(c, album_id, &photo_path))
 }
 
 /// Check if a path is within the Terra managed library or archive directories.
@@ -624,11 +557,6 @@ fn delete_photos(paths: Vec<String>) -> Result<(), String> {
         }
     }
     Ok(())
-}
-
-#[tauri::command]
-fn get_duplicates() -> Result<Vec<PhotoMetadata>, String> {
-    with_db("Failed to get duplicates", |c| db::get_duplicates(c))
 }
 
 #[tauri::command]
@@ -1121,12 +1049,6 @@ fn update_tag(id: i64, name: String, color: String) -> Result<(), String> {
     with_db("Failed to update tag", |c| db::update_tag(c, id, &name, &color))
 }
 
-/// COMMAND: Delete a tag
-#[tauri::command]
-fn delete_tag(id: i64) -> Result<(), String> {
-    with_db("Failed to delete tag", |c| db::delete_tag(c, id))
-}
-
 /// COMMAND: Get all tags
 #[tauri::command]
 fn get_all_tags() -> Result<Vec<db::Tag>, String> {
@@ -1151,12 +1073,6 @@ fn remove_tag_from_photo(tag_id: i64, photo_path: String) -> Result<(), String> 
     with_db("Failed to remove tag", |c| db::remove_tag_from_photo(c, tag_id, &photo_path))
 }
 
-/// COMMAND: Get photos by tags
-#[tauri::command]
-fn get_photos_by_tags(tag_ids: Vec<i64>, match_all: bool) -> Result<Vec<PhotoMetadata>, String> {
-    with_db("Failed to get photos by tags", |c| db::get_photos_by_tags(c, &tag_ids, match_all))
-}
-
 /// COMMAND: Search tags for autocomplete
 #[tauri::command]
 fn search_tags(query: String) -> Result<Vec<db::Tag>, String> {
@@ -1177,13 +1093,6 @@ fn get_library_path_command() -> Result<String, String> {
 #[tauri::command]
 fn set_library_path(path: String) -> Result<(), String> {
     with_db("Failed to set library path", |c| db::set_setting(c, "library_path", &path))
-}
-
-/// COMMAND: Get a setting value
-#[tauri::command]
-fn get_setting_command(key: String) -> Result<Option<String>, String> {
-    let conn = db_conn()?;
-    Ok(db::get_setting(&conn, &key))
 }
 
 // ============================================================================
@@ -1272,15 +1181,6 @@ async fn populate_file_sizes(window: tauri::Window) -> Result<ScanProgress, Stri
 // ============================================================================
 // Metadata Enrichment Commands
 // ============================================================================
-
-/// COMMAND: Enrich a single photo's metadata via the Python exiftool wrapper.
-#[tauri::command]
-fn enrich_photo_metadata(app: tauri::AppHandle, path: String) -> Result<(), String> {
-    let meta = enrich_path(&app, &path)?;
-    let conn = db_conn()?;
-    db::update_enriched_metadata(&conn, &path, &meta)
-        .map_err(|e| format!("Failed to save enriched metadata: {}", e))
-}
 
 /// COMMAND: Backfill enriched metadata for all photos lacking camera_make.
 /// Emits `metadata_enrich_progress` events every 10 photos.
@@ -1436,21 +1336,15 @@ pub fn run() {
     log::info!("Terra starting up...");
 
     tauri::Builder::default()
-        .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
-            scan_directory,
             upload_photos,
             import_provider_export,
             toggle_favorite,
             create_album,
-            delete_album,
             get_albums,
             add_to_album,
-            remove_from_album,
-            set_album_cover,
             delete_photos,
-            get_duplicates,
             get_locations,
             // Duplicate and screenshot detection
             scan_for_duplicates,
@@ -1470,24 +1364,20 @@ pub fn run() {
             // Tags
             create_tag,
             update_tag,
-            delete_tag,
             get_all_tags,
             get_tags_for_photo,
             add_tags_to_photos,
             remove_tag_from_photo,
-            get_photos_by_tags,
             search_tags,
             // Settings
             get_library_path_command,
             set_library_path,
-            get_setting_command,
             // Smart Collections
             get_smart_collections,
             // Storage Analytics
             get_storage_analytics,
             populate_file_sizes,
             // Metadata Enrichment
-            enrich_photo_metadata,
             enrich_all_metadata,
             // Thumbnails
             get_thumb_cache_root,

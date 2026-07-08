@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { X, Eye, Check, Archive, SkipForward, RotateCcw } from 'lucide-react';
 import { processPhotos } from '../utils/photoHelpers';

@@ -19,12 +19,10 @@ function fireKeyOnTarget(target, key, options = {}) {
 describe('useKeyboardShortcuts', () => {
   let onFocusSearch;
   let onCycleViewMode;
-  let onCloseTopModal;
 
   beforeEach(() => {
     onFocusSearch = vi.fn();
     onCycleViewMode = vi.fn();
-    onCloseTopModal = vi.fn();
   });
 
   function render(overrides = {}) {
@@ -32,7 +30,6 @@ describe('useKeyboardShortcuts', () => {
       useKeyboardShortcuts({
         onFocusSearch,
         onCycleViewMode,
-        onCloseTopModal,
         ...overrides,
       })
     );
@@ -49,12 +46,6 @@ describe('useKeyboardShortcuts', () => {
     render();
     fireKey('g');
     expect(onCycleViewMode).toHaveBeenCalledTimes(1);
-  });
-
-  it('pressing Escape calls onCloseTopModal', () => {
-    render();
-    fireKey('Escape');
-    expect(onCloseTopModal).toHaveBeenCalledTimes(1);
   });
 
   it('pressing "/" inside an input does not call onFocusSearch', () => {
@@ -92,10 +83,8 @@ describe('useKeyboardShortcuts', () => {
     render({ enabled: false });
     fireKey('/');
     fireKey('g');
-    fireKey('Escape');
     expect(onFocusSearch).not.toHaveBeenCalled();
     expect(onCycleViewMode).not.toHaveBeenCalled();
-    expect(onCloseTopModal).not.toHaveBeenCalled();
   });
 
   it('pressing a key after unmount calls nothing', () => {
@@ -103,9 +92,7 @@ describe('useKeyboardShortcuts', () => {
     unmount();
     fireKey('/');
     fireKey('g');
-    fireKey('Escape');
     expect(onFocusSearch).not.toHaveBeenCalled();
     expect(onCycleViewMode).not.toHaveBeenCalled();
-    expect(onCloseTopModal).not.toHaveBeenCalled();
   });
 });

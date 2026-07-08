@@ -1,14 +1,13 @@
 import { useState, useEffect, useRef } from 'react';
 import { AlertTriangle } from 'lucide-react';
 
-const VideoPlayer = ({ src, poster, autoPlay = true }) => {
+const VideoPlayer = ({ src, autoPlay = true }) => {
   const videoRef = useRef(null);
   const [isPlaying, setIsPlaying] = useState(autoPlay);
   const [progress, setProgress] = useState(0);
   const [isMuted, setIsMuted] = useState(false);
   const [showControls, setShowControls] = useState(false);
   const [duration, setDuration] = useState(0);
-  const [captionsEnabled, setCaptionsEnabled] = useState(false);
   const [videoError, setVideoError] = useState(null);
 
   useEffect(() => {
@@ -66,10 +65,6 @@ const VideoPlayer = ({ src, poster, autoPlay = true }) => {
     setProgress(e.target.value);
   };
 
-  const toggleCaptions = () => {
-    setCaptionsEnabled(!captionsEnabled);
-  };
-
   if (videoError) {
     return (
       <div className="relative w-full h-full flex items-center justify-center bg-black/50 rounded-lg">
@@ -91,14 +86,11 @@ const VideoPlayer = ({ src, poster, autoPlay = true }) => {
       <video
         ref={videoRef}
         src={src}
-        poster={poster}
         className="max-h-full max-w-full object-contain"
         onClick={togglePlay}
         playsInline
         loop
-      >
-        <track kind="captions" src="" label="English" />
-      </video>
+      />
 
       <div className={`absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/80 to-transparent transition-opacity duration-300 ${showControls || !isPlaying ? 'opacity-100' : 'opacity-0'}`}>
         <div className="flex flex-col space-y-2">
@@ -132,16 +124,6 @@ const VideoPlayer = ({ src, poster, autoPlay = true }) => {
               <span className="text-xs font-mono opacity-70">
                 {new Date(progress / 100 * duration * 1000).toISOString().substr(14, 5)} / {new Date(duration * 1000).toISOString().substr(14, 5)}
               </span>
-            </div>
-
-            <div className="flex items-center space-x-3">
-              <button
-                onClick={toggleCaptions}
-                className={`text-xs font-bold border border-white/30 rounded px-1.5 py-0.5 transition-all ${captionsEnabled ? 'bg-white text-black border-white' : 'hover:bg-white/10'}`}
-                title="Closed Captions"
-              >
-                CC
-              </button>
             </div>
           </div>
         </div>

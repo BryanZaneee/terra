@@ -127,7 +127,5 @@ export function usePhotos({ refreshCounts } = {}) {
     handleToggleFavorite,
     handleDeleteSelected,
     loadNextPage: paged.loadNextPage,
-    hasMore: paged.hasMore,
-    loadingPage: paged.loadingPage,
   };
 }
