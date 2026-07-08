@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Terra is a high-performance local photo gallery application for macOS built with Tauri v2, React, and Rust. It features a managed photo library system with SQLite caching, EXIF/GPS metadata extraction, duplicate detection, screenshot detection, tagging, smart collections, cloud provider import, and a unique glassy UI with animated ASCII dithered background.
+Terra is a high-performance local photo gallery application for macOS built with Tauri v2, React, and Rust. It features a managed photo library system with SQLite caching, EXIF/GPS metadata extraction, duplicate detection, screenshot detection, tagging, smart collections, cloud provider import, and a unique glassy UI with a themed static-gradient background.
 
 ## Development Commands
 
@@ -34,7 +34,7 @@ cargo build             # Build without running
 ### Three-Layer System
 
 1. **Rust Backend** (`src-tauri/src/`)
-   - `lib.rs` - Entry point: 40+ Tauri commands, `PhotoMetadata` struct, process-wide DB handle
+   - `lib.rs` - Entry point: ~38 Tauri commands, `PhotoMetadata` struct, process-wide DB handle
    - `db/` - SQLite operations split into modules: `photos`, `albums`, `tags`, `archive`, `review`, `scan`, `collections`, `analytics`, `pagination`, `schema`, `row`
    - `imports.rs` - Cloud provider import discovery (iCloud Photos, Google Photos, Snapchat, local export)
    - `media.rs` - dHash computation, screenshot detection, image processing, geocoder
