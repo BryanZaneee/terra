@@ -1,38 +1,36 @@
 /**
  * Group photos for display based on the active view mode.
  *
- * Returns an array of [groupKey, photos[]] tuples in display order. The
- * caller treats each tuple as one section (e.g. a year header followed by
- * its photos in a year view).
+ * Returns an array of [groupKey, photos[]] tuples in display order.
  *
- * @param {string} viewMode  - one of 'all' | 'year' | 'month' | 'photos' |
- *                             'videos' | 'favorites' | 'locations' | 'search' |
- *                             'tags' | 'duplicates' | 'album:<id>' | 'collection:<id>'
- * @param {Array}  photos    - photos already loaded for this view
- * @param {Array}  smartCollections - smart collection metadata (used to
- *                             label `collection:<id>` views)
- * @returns {Array<[string, Array]>}
+ * @param {string} viewMode
+ * @param {Array} photos - loaded photos for this view (server-filtered when paginated)
+ * @param {Array} smartCollections
+ * @param {{ serverLocations?: Array<[string, number]> }} options
  */
-export function groupPhotosBy(viewMode, photos, smartCollections = []) {
-  const groups = {};
-
-  if (viewMode === 'duplicates') {
-    photos.forEach(photo => {
-      if (!photo.hash) return;
-      const key = `Duplicate Group: ${photo.hash.substring(0, 8)}`;
-      if (!groups[key]) groups[key] = [];
-      groups[key].push(photo);
-    });
-    return Object.entries(groups);
-  }
+export function groupPhotosBy(viewMode, photos, smartCollections = [], options = {}) {
+  const { serverLocations = [] } = options;
 
   if (viewMode === 'locations') {
-    photos.forEach(photo => {
+    const byLocation = {};
+    photos.forEach((photo) => {
       const key = photo.location || 'Unknown Location';
-      if (!groups[key]) groups[key] = [];
-      groups[key].push(photo);
+      if (!byLocation[key]) byLocation[key] = [];
+      byLocation[key].push(photo);
     });
-    return Object.entries(groups).sort((a, b) => b[1].length - a[1].length);
+
+    if (serverLocations.length > 0) {
+      return serverLocations
+        .map(([name]) => [name, byLocation[name] ?? []])
+        .filter(([, items]) => items.length > 0);
+    }
+
+    return Object.entries(byLocation).sort((a, b) => b[1].length - a[1].length);
+  }
+
+  if (viewMode.startsWith('location:')) {
+    const name = decodeURIComponent(viewMode.slice(9));
+    return [[name || 'Location', photos]];
   }
 
   if (viewMode === 'tags') {
@@ -41,15 +39,12 @@ export function groupPhotosBy(viewMode, photos, smartCollections = []) {
 
   if (viewMode.startsWith('collection:')) {
     const collectionId = viewMode.split(':')[1];
-    const collection = smartCollections.find(c => c.id === collectionId);
+    const collection = smartCollections.find((c) => c.id === collectionId);
     return [[collection ? collection.name : 'Smart Collection', photos]];
   }
 
-  photos.forEach(photo => {
-    if (viewMode === 'photos' && photo.mediaType !== 'photo') return;
-    if (viewMode === 'videos' && photo.mediaType !== 'video') return;
-    if (viewMode === 'favorites' && !photo.is_favorite) return;
-
+  const groups = {};
+  photos.forEach((photo) => {
     let key;
     if (viewMode === 'year') {
       key = new Date(photo.date * 1000).getFullYear().toString();
@@ -69,4 +64,15 @@ export function groupPhotosBy(viewMode, photos, smartCollections = []) {
   });
 
   return Object.entries(groups);
+}
+
+/** Group header counts are library totals only for locations (via hints). */
+export function usesPartialGroupCounts(viewMode) {
+  return viewMode === 'year' || viewMode === 'month';
+}
+
+/** Server-authoritative counts for location group headers. */
+export function buildGroupCountHints(viewMode, serverLocations = []) {
+  if (viewMode !== 'locations' || serverLocations.length === 0) return null;
+  return Object.fromEntries(serverLocations);
 }

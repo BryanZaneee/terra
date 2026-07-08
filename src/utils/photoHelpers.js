@@ -1,4 +1,5 @@
 import { convertFileSrc } from '@tauri-apps/api/core';
+import { mediaKindFromFilename } from './mediaKind';
 
 // Must match THUMB_SIZE in src-tauri/src/thumbnails.rs.
 export const THUMB_SIZE = 256;
@@ -26,7 +27,7 @@ export function processPhotos(rawPhotos) {
     id: p.path,
     url: convertFileSrc(p.path),
     date: p.date_taken,
-    mediaType: p.name.match(/\.(mp4|mov|avi|webm|mkv)$/i) ? 'video' : 'photo',
+    mediaType: mediaKindFromFilename(p.name),
     location: p.location_name,
     hash: p.content_hash,
   }));

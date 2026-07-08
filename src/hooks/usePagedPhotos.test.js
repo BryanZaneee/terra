@@ -9,10 +9,10 @@ function setup() {
   const setPhotos = vi.fn();
   const setLoading = vi.fn();
   const setError = vi.fn();
-  const { result } = renderHook(() =>
+  const hook = renderHook(() =>
     usePagedPhotos({ setPhotos, setLoading, setError }),
   );
-  return { result, setPhotos, setLoading, setError };
+  return { ...hook, setPhotos, setLoading, setError };
 }
 
 beforeEach(() => {
@@ -109,5 +109,21 @@ describe('usePagedPhotos', () => {
     });
     expect(setError).toHaveBeenCalledWith('boom');
     expect(setLoading).toHaveBeenLastCalledWith(false);
+  });
+
+  it('survives React StrictMode remount (guard resets on setup)', async () => {
+    invoke.mockResolvedValue({
+      photos: [{ path: '/p/1.jpg', name: '1.jpg', date_taken: 1000, is_favorite: false }],
+      next_cursor: null,
+    });
+
+    const { result: remounted, setPhotos: setPhotos2 } = setup();
+
+    await act(async () => {
+      await remounted.current.loadFirstPage({ kind: 'all' });
+    });
+
+    expect(setPhotos2).toHaveBeenCalled();
+    expect(setPhotos2.mock.calls[0][0]).toHaveLength(1);
   });
 });

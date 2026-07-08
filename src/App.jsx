@@ -2,7 +2,7 @@ import { useState, useCallback, useRef, lazy, Suspense } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { Copy, MonitorSmartphone } from 'lucide-react';
 
-import { filterForViewMode } from './utils/viewFilter';
+import { supportsPaginatedScroll } from './utils/viewQuery';
 import ErrorBoundary from './components/ErrorBoundary';
 import DitherBackground from './components/DitherBackground';
 import Sidebar from './components/Sidebar';
@@ -60,6 +60,7 @@ const AppLayout = () => {
     viewMode, setViewMode, cycleViewMode, searchQuery, handleSearch,
     smartCollections, loadSmartCollections,
     groupedPhotos, flatVisiblePhotos, expandedGroups, toggleGroup,
+    groupCountHints, partialGroupCounts,
     unreviewedCount, setUnreviewedCount,
     loadLocations,
   } = useViewContext();
@@ -137,6 +138,20 @@ const AppLayout = () => {
     handleDeleteSelected(selectedPhotos, clearSelection, loadAlbums, loadLocations);
   };
 
+  const onModalAddToAlbum = useCallback(() => {
+    if (!selectedPhoto) return;
+    if (!selectionMode) setSelectionMode(true);
+    if (!selectedPhotos.has(selectedPhoto.path)) toggleSelection(selectedPhoto.path);
+    setShowAddToAlbum(true);
+  }, [selectedPhoto, selectionMode, selectedPhotos, toggleSelection, setSelectionMode]);
+
+  const onModalTagAssign = useCallback(() => {
+    if (!selectedPhoto) return;
+    if (!selectionMode) setSelectionMode(true);
+    if (!selectedPhotos.has(selectedPhoto.path)) toggleSelection(selectedPhoto.path);
+    setShowTagAssign(true);
+  }, [selectedPhoto, selectionMode, selectedPhotos, toggleSelection, setSelectionMode]);
+
   const openImportWizard = useCallback((providerId = 'google_photos') => {
     setImportProviderId(providerId);
     setShowImportWizard(true);
@@ -201,10 +216,12 @@ const AppLayout = () => {
           // server-side filter — multi-tag, duplicates, and an empty search
           // return null and stay silent.
           onEndReached={
-            filterForViewMode(viewMode, { selectedTagIds, searchQuery }) != null
+            supportsPaginatedScroll(viewMode, { selectedTagIds, searchQuery })
               ? loadNextPage
               : undefined
           }
+          groupCountHints={groupCountHints}
+          partialGroupCounts={partialGroupCounts}
         />
       </div>
 
@@ -229,8 +246,8 @@ const AppLayout = () => {
             onArchive={onModalArchive}
             onDelete={onModalDelete}
             onReveal={onModalReveal}
-            onAddToAlbum={() => { /* TODO(phase-A): wire single-photo add-to-album from modal */ }}
-            onTagAssign={() => { /* TODO(phase-A): wire single-photo tag-assign from modal */ }}
+            onAddToAlbum={onModalAddToAlbum}
+            onTagAssign={onModalTagAssign}
           />
         )}
 

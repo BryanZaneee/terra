@@ -6,7 +6,7 @@ const { invoke } = await import('@tauri-apps/api/core');
 const { listen } = await import('@tauri-apps/api/event');
 
 const deps = {
-  loadPhotosFromDatabase: vi.fn(),
+  reloadCurrentView: vi.fn(),
   setStatusWithTimeout: vi.fn(),
   setError: vi.fn(),
 };
@@ -74,7 +74,7 @@ describe('useCleanup', () => {
 
     expect(invoke).toHaveBeenCalledWith('archive_photos', { paths: ['/a.jpg', '/b.jpg'] });
     expect(deps.setStatusWithTimeout).toHaveBeenCalledWith('Archived 2 photos');
-    expect(deps.loadPhotosFromDatabase).toHaveBeenCalled();
+    expect(deps.reloadCurrentView).toHaveBeenCalled();
   });
 
   it('handleOpenArchive loads archived photos and shows view', async () => {

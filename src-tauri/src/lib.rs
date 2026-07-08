@@ -147,10 +147,12 @@ pub enum ViewFilter {
     Unreviewed,
     PhotosOnly,
     VideosOnly,
-    /// Single-tag filter. Multi-tag (with AND/OR semantics) still goes
-    /// through the legacy `get_photos_by_tags` until/unless we extend the
-    /// cursor schema to handle the GROUP BY HAVING shape.
-    Tag { id: i64 },
+    /// One or more tags. `match_all: true` requires every tag; false matches any (OR).
+    Tags {
+        ids: Vec<i64>,
+        #[serde(default)]
+        match_all: bool,
+    },
     Album { id: i64 },
     Location { name: String },
     Search { query: String },
@@ -732,18 +734,18 @@ async fn scan_for_duplicates(window: tauri::Window) -> Result<ScanProgress, Stri
 fn get_duplicate_groups(threshold: u32) -> Result<Vec<DuplicateGroup>, String> {
     let conn = db_conn()?;
 
-    // Get all photos with their hashes
-    let photos_with_hash = db::get_all_photos_with_dhash(&conn)
+    // Single query: metadata + dhash (avoids loading the library twice).
+    let photos_with_hash = db::get_active_photos_for_duplicate_scan(&conn)
         .map_err(|e| format!("Failed to get photos: {}", e))?;
 
-    // Also get full photo metadata for later
-    let all_photos = db::get_all_photos(&conn)
-        .map_err(|e| format!("Failed to get photo metadata: {}", e))?;
+    let photo_map: HashMap<String, PhotoMetadata> = photos_with_hash
+        .iter()
+        .map(|(p, _)| (p.path.clone(), p.clone()))
+        .collect();
 
-    // Create a map for quick lookup
-    let photo_map: HashMap<String, PhotoMetadata> = all_photos
-        .into_iter()
-        .map(|p| (p.path.clone(), p))
+    let hash_rows: Vec<(String, Option<i64>, Option<String>)> = photos_with_hash
+        .iter()
+        .map(|(p, dhash)| (p.path.clone(), *dhash, p.content_hash.clone()))
         .collect();
 
     let mut groups: Vec<DuplicateGroup> = Vec::new();
@@ -752,7 +754,7 @@ fn get_duplicate_groups(threshold: u32) -> Result<Vec<DuplicateGroup>, String> {
 
     // First, find exact duplicates (same content_hash)
     let mut hash_groups: HashMap<String, Vec<String>> = HashMap::new();
-    for (path, _, content_hash) in &photos_with_hash {
+    for (path, _, content_hash) in &hash_rows {
         if let Some(hash) = content_hash {
             hash_groups.entry(hash.clone()).or_default().push(path.clone());
         }
@@ -784,8 +786,8 @@ fn get_duplicate_groups(threshold: u32) -> Result<Vec<DuplicateGroup>, String> {
     // Use provided threshold or fall back to configured default
     let effective_threshold = if threshold == 0 { config::DUPLICATE_HAMMING_THRESHOLD } else { threshold };
 
-    for i in 0..photos_with_hash.len() {
-        let (path_i, hash_i, _) = &photos_with_hash[i];
+    for i in 0..hash_rows.len() {
+        let (path_i, hash_i, _) = &hash_rows[i];
 
         if processed_paths.contains(path_i) {
             continue;
@@ -794,8 +796,8 @@ fn get_duplicate_groups(threshold: u32) -> Result<Vec<DuplicateGroup>, String> {
         if let Some(h_i) = hash_i {
             let mut similar_paths: Vec<String> = vec![path_i.clone()];
 
-            for j in (i + 1)..photos_with_hash.len() {
-                let (path_j, hash_j, _) = &photos_with_hash[j];
+            for j in (i + 1)..hash_rows.len() {
+                let (path_j, hash_j, _) = &hash_rows[j];
 
                 if processed_paths.contains(path_j) {
                     continue;
@@ -851,24 +853,29 @@ fn get_duplicate_groups(threshold: u32) -> Result<Vec<DuplicateGroup>, String> {
 async fn scan_for_screenshots(window: tauri::Window) -> Result<Vec<PhotoMetadata>, String> {
     let conn = db_conn()?;
 
-    // Get all non-archived photos
-    let all_photos = db::get_all_photos(&conn)
-        .map_err(|e| format!("Failed to get photos: {}", e))?;
-
-    let total = all_photos.len() as u32;
+    let total = db::count_active_photos(&conn)
+        .map_err(|e| format!("Failed to count photos: {}", e))? as u32;
     let processed = Arc::new(AtomicU32::new(0));
+    const BATCH: i64 = 500;
 
-    // Emit initial progress
     let _ = window.emit("screenshot_scan_progress", ScanProgress {
         total,
         processed: 0,
         phase: "analyzing".to_string(),
     });
 
-    // Check each photo for screenshot characteristics
-    let screenshots: Vec<PhotoMetadata> = all_photos
-        .into_iter()
-        .filter(|photo| {
+    let mut screenshots: Vec<PhotoMetadata> = Vec::new();
+    let mut offset: i64 = 0;
+
+    loop {
+        let batch = db::get_active_photos_batch(&conn, offset, BATCH)
+            .map_err(|e| format!("Failed to get photos: {}", e))?;
+        if batch.is_empty() {
+            break;
+        }
+        offset += batch.len() as i64;
+
+        for photo in batch {
             let current = processed.fetch_add(1, Ordering::SeqCst) + 1;
             if current % 50 == 0 || current == total {
                 let _ = window.emit("screenshot_scan_progress", ScanProgress {
@@ -878,16 +885,12 @@ async fn scan_for_screenshots(window: tauri::Window) -> Result<Vec<PhotoMetadata
                 });
             }
 
-            let is_screenshot = detect_screenshot(&photo.name, photo.width, photo.height);
-
-            // Update database
-            if is_screenshot {
+            if detect_screenshot(&photo.name, photo.width, photo.height) {
                 let _ = db::update_photo_screenshot_flag(&conn, &photo.path, true);
+                screenshots.push(photo);
             }
-
-            is_screenshot
-        })
-        .collect();
+        }
+    }
 
     // Emit completion
     let _ = window.emit("screenshot_scan_progress", ScanProgress {

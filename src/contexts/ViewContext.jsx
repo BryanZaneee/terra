@@ -1,9 +1,10 @@
 import { createContext, useContext, useState, useMemo, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { processPhotos } from '../utils/photoHelpers';
-import { groupPhotosBy } from '../utils/groupPhotos';
-import { filterForViewMode, filterKey } from '../utils/viewFilter';
+import { groupPhotosBy, buildGroupCountHints, usesPartialGroupCounts } from '../utils/groupPhotos';
+import { CONFIG } from '../config';
 import { useAppContext } from './AppContext';
+import { useViewPhotoLoader } from '../hooks/useViewPhotoLoader';
+import { useAsyncGuard } from '../hooks/useAsyncGuard';
 
 const ViewContext = createContext(null);
 
@@ -13,7 +14,6 @@ export function ViewProvider({ children }) {
   const {
     photos, setPhotos, setLoading, loadPhotosFromDatabase,
     selectedTagIds, setSelectedTagIds,
-    tags, loadTags,
   } = useAppContext();
 
   const [viewMode, setViewMode] = useState('all');
@@ -25,23 +25,23 @@ export function ViewProvider({ children }) {
 
   const searchDebounceRef = useRef(null);
   const prevGroupKeysRef = useRef('');
-  const isMountedRef = useRef(true);
-  // Stable key of the last server-side filter we requested. Pure-presentation
-  // switches (all → year → month → locations) all map to the same key and
-  // skip the round-trip; album:5 → album:6 changes the key and reloads.
-  const lastFilterKeyRef = useRef(filterKey({ kind: 'all' }));
+  const activeRef = useAsyncGuard();
 
+  const { loadSearch, invalidateQueryKey } = useViewPhotoLoader({
+    viewMode,
+    selectedTagIds,
+    searchQuery,
+    loadPhotosFromDatabase,
+  });
 
   useEffect(() => {
-    isMountedRef.current = true;
     loadLocations();
     loadSmartCollections();
     invoke('get_unreviewed_count').then(setUnreviewedCount).catch(console.error);
     return () => {
-      isMountedRef.current = false;
       if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
     };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   const loadLocations = async () => {
     try {
@@ -64,77 +64,41 @@ export function ViewProvider({ children }) {
     if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
 
     if (!query.trim()) {
-      // Empty query → drop back to All; the effect below detects the filter
-      // change and resets the cursor walk.
+      invalidateQueryKey();
       setViewMode('all');
       return;
     }
 
     searchDebounceRef.current = setTimeout(async () => {
-      if (!isMountedRef.current) return;
-      const filter = { kind: 'search', query: query.trim() };
-      lastFilterKeyRef.current = filterKey(filter);
+      if (!activeRef.current) return;
       setViewMode('search');
-      await loadPhotosFromDatabase(filter);
-    }, 300);
+      await loadSearch(query.trim());
+    }, CONFIG.SEARCH_DEBOUNCE_MS);
   };
 
   const groupedPhotos = useMemo(
-    () => groupPhotosBy(viewMode, photos, smartCollections),
-    [photos, viewMode, smartCollections],
+    () => groupPhotosBy(viewMode, photos, smartCollections, { serverLocations: locations }),
+    [photos, viewMode, smartCollections, locations],
   );
+
+  const groupCountHints = useMemo(
+    () => buildGroupCountHints(viewMode, locations),
+    [viewMode, locations],
+  );
+
+  const partialGroupCounts = usesPartialGroupCounts(viewMode);
 
   const flatVisiblePhotos = useMemo(
     () => groupedPhotos.flatMap(([, items]) => items),
     [groupedPhotos],
   );
 
-  // Load photos for the current view. Most views resolve to a server-side
-  // ViewFilter that the paged loader handles; the only exceptions are:
-  //  - multi-tag (AND/OR semantics that don't fit the cursor design),
-  //  - duplicates and search, which are populated by their own flows
-  //    (search via handleSearch above; duplicates via the scan modal).
-  useEffect(() => {
-    const load = async () => {
-      try {
-        if (viewMode === 'search' || viewMode === 'duplicates') {
-          // Photos here come from handleSearch / the duplicate scan; no
-          // load to perform from this effect.
-          return;
-        }
-
-        const filter = filterForViewMode(viewMode, { selectedTagIds });
-        if (filter) {
-          const key = filterKey(filter);
-          if (key !== lastFilterKeyRef.current) {
-            lastFilterKeyRef.current = key;
-            await loadPhotosFromDatabase(filter);
-          }
-          return;
-        }
-
-        // No paginated filter resolved → multi-tag is the only such case
-        // today. Direct-fetch with AND/OR semantics, then mark the cursor
-        // stale so the next paginated view triggers a reload.
-        lastFilterKeyRef.current = null;
-        if (viewMode === 'tags' && selectedTagIds.length > 0) {
-          setLoading(true);
-          const result = await invoke('get_photos_by_tags', {
-            tagIds: selectedTagIds,
-            matchAll: false,
-          });
-          setPhotos(processPhotos(result));
-        }
-      } catch (err) {
-        console.error(err);
-      } finally {
-        setLoading(false);
-      }
-    };
-    load();
-  }, [viewMode, selectedTagIds]); // eslint-disable-line react-hooks/exhaustive-deps
-
   const toggleGroup = (groupKey) => {
+    if (viewMode === 'locations' && groupKey) {
+      setViewMode(`location:${encodeURIComponent(groupKey)}`);
+      invalidateQueryKey();
+      return;
+    }
     setExpandedGroups(prev => ({ ...prev, [groupKey]: !prev[groupKey] }));
   };
 
@@ -146,7 +110,6 @@ export function ViewProvider({ children }) {
     setViewMode(next);
   };
 
-  // Auto-expand new groups whenever the visible group set changes
   useEffect(() => {
     const currentKeys = groupedPhotos.map(([key]) => key).join('|');
     if (currentKeys !== prevGroupKeysRef.current) {
@@ -157,7 +120,7 @@ export function ViewProvider({ children }) {
       });
       setExpandedGroups(initial);
     }
-  }, [groupedPhotos]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [groupedPhotos]);
 
   const value = {
     viewMode,
@@ -170,6 +133,8 @@ export function ViewProvider({ children }) {
     smartCollections,
     loadSmartCollections,
     groupedPhotos,
+    groupCountHints,
+    partialGroupCounts,
     flatVisiblePhotos,
     expandedGroups,
     toggleGroup,

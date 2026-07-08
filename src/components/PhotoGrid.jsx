@@ -24,6 +24,8 @@ const PhotoGrid = ({
   onToggleSelection,
   uploadStatus,
   onEndReached,
+  groupCountHints,
+  partialGroupCounts,
 }) => {
   const cols = useResponsiveColumns();
 
@@ -90,7 +92,14 @@ const PhotoGrid = ({
               </div>
               <h2 className="text-xl font-light tracking-wide text-white/90">{groupKey}</h2>
               <div className="h-px flex-grow bg-gradient-to-r from-white/20 to-transparent ml-4"></div>
-              <span className="text-xs font-mono text-white/40">{items?.length ?? 0} items</span>
+              <span className="text-xs font-mono text-white/40">
+                {(() => {
+                  if (partialGroupCounts) return null;
+                  const hint = groupCountHints?.[groupKey];
+                  const count = hint ?? items?.length ?? 0;
+                  return `${count} items`;
+                })()}
+              </span>
             </div>
           );
         }}

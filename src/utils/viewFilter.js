@@ -1,16 +1,7 @@
 /**
  * View-mode → backend `ViewFilter` mapping (PAGINATION_PLAN.md).
- *
- * Returns `null` for views that aren't on the paginated path (multi-tag
- * selections, the duplicates scan, an empty search query) — those still
- * bypass `get_photos_page` and fetch in one shot.
  */
 const ALL_FILTER = { kind: 'all' };
-
-const STATIC_PAGINATED = new Set([
-  'all', 'year', 'month', 'locations',
-  'favorites', 'photos', 'videos', 'search',
-]);
 
 export function filterForViewMode(viewMode, ctx = {}) {
   const { selectedTagIds = [], searchQuery = '' } = ctx;
@@ -29,10 +20,8 @@ export function filterForViewMode(viewMode, ctx = {}) {
       return q ? { kind: 'search', query: q } : null;
     }
     case 'tags': {
-      // Single-tag paginates; multi-tag falls back to the legacy
-      // get_photos_by_tags call (AND/OR semantics need a different cursor).
-      if (selectedTagIds.length === 1) return { kind: 'tag', id: selectedTagIds[0] };
-      return null;
+      if (selectedTagIds.length === 0) return null;
+      return { kind: 'tags', ids: [...selectedTagIds], match_all: false };
     }
     default: {
       if (viewMode.startsWith('album:')) {
@@ -42,21 +31,33 @@ export function filterForViewMode(viewMode, ctx = {}) {
       if (viewMode.startsWith('collection:')) {
         return { kind: 'smart_collection', id: viewMode.slice(11) };
       }
-      // duplicates and any other unknown viewMode stays on the legacy path.
+      if (viewMode.startsWith('location:')) {
+        const name = decodeURIComponent(viewMode.slice(9));
+        return name ? { kind: 'location', name } : null;
+      }
       return null;
     }
   }
 }
 
-export function isPaginatedViewMode(viewMode) {
-  if (STATIC_PAGINATED.has(viewMode)) return true;
-  if (viewMode.startsWith('album:')) return true;
-  if (viewMode.startsWith('collection:')) return true;
-  // 'tags' depends on selection size — caller checks via filterForViewMode.
-  return false;
-}
-
-/** Stable key for change-detection. JSON.stringify on a fixed shape is fine. */
+/** Stable string key for change-detection and query dedup. */
 export function filterKey(filter) {
-  return filter ? JSON.stringify(filter) : null;
+  if (!filter) return null;
+  switch (filter.kind) {
+    case 'all': return 'all';
+    case 'favorites': return 'favorites';
+    case 'photos_only': return 'photos_only';
+    case 'videos_only': return 'videos_only';
+    case 'archived': return 'archived';
+    case 'unreviewed': return 'unreviewed';
+    case 'tags': {
+      const sorted = [...filter.ids].sort((a, b) => a - b);
+      return `tags:${sorted.join(',')}:${filter.match_all ? 'and' : 'or'}`;
+    }
+    case 'album': return `album:${filter.id}`;
+    case 'location': return `location:${filter.name}`;
+    case 'search': return `search:${filter.query}`;
+    case 'smart_collection': return `collection:${filter.id}`;
+    default: return JSON.stringify(filter);
+  }
 }

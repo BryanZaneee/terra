@@ -66,7 +66,7 @@ export function AppProvider({ children }) {
   }, [loadAlbums]);
 
   const cleanupHook = useCleanup({
-    loadPhotosFromDatabase: photosHook.loadPhotosFromDatabase,
+    reloadCurrentView: photosHook.reloadCurrentView,
     setStatusWithTimeout: photosHook.setStatusWithTimeout,
     setError: photosHook.setError,
     refreshCounts,

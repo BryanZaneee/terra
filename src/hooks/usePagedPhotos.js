@@ -1,33 +1,19 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useState, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { processPhotos } from '../utils/photoHelpers';
 import { CONFIG } from '../config';
+import { useAsyncGuard } from './useAsyncGuard';
 
 /**
  * Cursor-paginated photo loader (PAGINATION_PLAN.md).
- *
- * Composed by `usePhotos` so the existing `[photos, setPhotos]` state stays
- * single-sourced. This hook only owns the cursor + paging-loading flag and
- * writes results back through the supplied setters.
- *
- * `loadFirstPage(filter)` resets the page walk for a new filter; the active
- * filter is captured in a ref so `loadNextPage` keeps using it even after
- * later renders without forcing the caller to re-pass it on every scroll.
  */
 export function usePagedPhotos({ setPhotos, setLoading, setError }) {
   const [nextCursor, setNextCursor] = useState(null);
   const [loadingPage, setLoadingPage] = useState(false);
   const filterRef = useRef({ kind: 'all' });
-  const isMountedRef = useRef(true);
-
-  useEffect(() => () => {
-    isMountedRef.current = false;
-  }, []);
+  const activeRef = useAsyncGuard();
 
   const loadFirstPage = useCallback(async (filter) => {
-    // Undefined `filter` means "reuse the last filter" — used by the cleanup
-    // hook after archive/delete mutations to refresh the current view in
-    // place. The ref defaults to All on first render so initial mount works.
     if (filter !== undefined) filterRef.current = filter;
     const activeFilter = filterRef.current;
     setLoading(true);
@@ -38,16 +24,20 @@ export function usePagedPhotos({ setPhotos, setLoading, setError }) {
         cursor: null,
         limit: CONFIG.PAGE_SIZE,
       });
-      if (!isMountedRef.current) return;
+      if (!activeRef.current) return;
       setPhotos(processPhotos(result.photos));
       setNextCursor(result.next_cursor ?? null);
     } catch (err) {
       console.error('Failed to load first page:', err);
       if (setError) setError(typeof err === 'string' ? err : err?.message ?? 'Failed to load photos');
     } finally {
-      if (isMountedRef.current) setLoading(false);
+      if (activeRef.current) setLoading(false);
     }
-  }, [setPhotos, setLoading, setError]);
+  }, [setPhotos, setLoading, setError, activeRef]);
+
+  const reloadCurrentView = useCallback(async () => {
+    await loadFirstPage(undefined);
+  }, [loadFirstPage]);
 
   const loadNextPage = useCallback(async () => {
     if (!nextCursor || loadingPage) return;
@@ -58,18 +48,19 @@ export function usePagedPhotos({ setPhotos, setLoading, setError }) {
         cursor: nextCursor,
         limit: CONFIG.PAGE_SIZE,
       });
-      if (!isMountedRef.current) return;
+      if (!activeRef.current) return;
       setPhotos((prev) => [...prev, ...processPhotos(result.photos)]);
       setNextCursor(result.next_cursor ?? null);
     } catch (err) {
       console.error('Failed to load next page:', err);
     } finally {
-      if (isMountedRef.current) setLoadingPage(false);
+      if (activeRef.current) setLoadingPage(false);
     }
-  }, [nextCursor, loadingPage, setPhotos]);
+  }, [nextCursor, loadingPage, setPhotos, activeRef]);
 
   return {
     loadFirstPage,
+    reloadCurrentView,
     loadNextPage,
     hasMore: nextCursor != null,
     loadingPage,

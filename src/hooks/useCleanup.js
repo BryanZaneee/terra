@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { CONFIG } from '../config';
 
-export function useCleanup({ loadPhotosFromDatabase, setStatusWithTimeout, setError, refreshCounts }) {
+export function useCleanup({ reloadCurrentView, setStatusWithTimeout, setError, refreshCounts }) {
   const [showDuplicateScan, setShowDuplicateScan] = useState(false);
   const [showScreenshotScan, setShowScreenshotScan] = useState(false);
   const [showDuplicateReview, setShowDuplicateReview] = useState(false);
@@ -15,7 +15,6 @@ export function useCleanup({ loadPhotosFromDatabase, setStatusWithTimeout, setEr
   const [screenshots, setScreenshots] = useState([]);
   const [archivedPhotos, setArchivedPhotos] = useState([]);
 
-  // Run archive cleanup on startup
   useEffect(() => {
     invoke('cleanup_old_archives').catch(err => {
       console.error("Failed to cleanup archives:", err);
@@ -83,7 +82,7 @@ export function useCleanup({ loadPhotosFromDatabase, setStatusWithTimeout, setEr
     try {
       await invoke('archive_photos', { paths });
       setStatusWithTimeout(`Archived ${paths.length} photos`);
-      loadPhotosFromDatabase();
+      await reloadCurrentView();
       refreshCounts?.();
       if (showDuplicateReview) {
         const groups = await invoke('get_duplicate_groups', { threshold: CONFIG.DUPLICATE_THRESHOLD });
@@ -97,20 +96,20 @@ export function useCleanup({ loadPhotosFromDatabase, setStatusWithTimeout, setEr
       console.error("Failed to archive photos:", err);
       setError(typeof err === 'string' ? err : err?.message ?? 'Failed to archive photos');
     }
-  }, [loadPhotosFromDatabase, setStatusWithTimeout, setError, refreshCounts, showDuplicateReview, showScreenshotReview]);
+  }, [reloadCurrentView, setStatusWithTimeout, setError, refreshCounts, showDuplicateReview, showScreenshotReview]);
 
   const handleRestorePhotos = useCallback(async (paths) => {
     try {
       await invoke('restore_photos', { paths });
       setStatusWithTimeout(`Restored ${paths.length} photos`);
-      loadPhotosFromDatabase();
+      await reloadCurrentView();
       loadArchivedPhotos();
       refreshCounts?.();
     } catch (err) {
       console.error("Failed to restore photos:", err);
       setError(typeof err === 'string' ? err : err?.message ?? 'Failed to restore photos');
     }
-  }, [loadPhotosFromDatabase, setStatusWithTimeout, setError, refreshCounts]);
+  }, [reloadCurrentView, setStatusWithTimeout, setError, refreshCounts]);
 
   const loadArchivedPhotos = useCallback(async () => {
     try {

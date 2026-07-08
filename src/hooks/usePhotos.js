@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { CONFIG } from '../config';
 import { usePagedPhotos } from './usePagedPhotos';
+import { useAsyncGuard } from './useAsyncGuard';
 
 export function usePhotos({ refreshCounts } = {}) {
   const [photos, setPhotos] = useState([]);
@@ -12,10 +13,8 @@ export function usePhotos({ refreshCounts } = {}) {
   const [libraryPath, setLibraryPath] = useState('');
 
   const statusTimeoutRef = useRef(null);
-  const isMountedRef = useRef(true);
+  const activeRef = useAsyncGuard();
 
-  // Pagination owns the cursor + per-page loading flag; setPhotos/setLoading
-  // here remain the single source of truth for the photos list.
   const paged = usePagedPhotos({ setPhotos, setLoading, setError });
 
   const setStatusWithTimeout = useCallback((message, duration = CONFIG.STATUS_TIMEOUT_MS) => {
@@ -32,21 +31,18 @@ export function usePhotos({ refreshCounts } = {}) {
   }, []);
 
   useEffect(() => {
-    isMountedRef.current = true;
     invoke('get_library_path_command').then(setLibraryPath).catch(console.error);
     return () => {
-      isMountedRef.current = false;
       if (statusTimeoutRef.current) clearTimeout(statusTimeoutRef.current);
     };
   }, []);
 
-  // `filter === undefined` means "reuse the last filter" — what the cleanup
-  // hook needs after archive/delete so the user stays on their current view
-  // (e.g. Favorites) instead of snapping back to All.
   const loadPhotosFromDatabase = useCallback(async (filter) => {
-    if (!isMountedRef.current) return;
+    if (!activeRef.current) return;
     await paged.loadFirstPage(filter);
-  }, [paged.loadFirstPage]);
+  }, [paged.loadFirstPage, activeRef]);
+
+  const reloadCurrentView = paged.reloadCurrentView;
 
   const handleUploadPhotos = useCallback(async () => {
     try {
@@ -70,7 +66,7 @@ export function usePhotos({ refreshCounts } = {}) {
       setUploadStatus(`Uploading ${selected.length} photos...`);
 
       const uploaded = await invoke('upload_photos', { filePaths: selected });
-      await loadPhotosFromDatabase();
+      await reloadCurrentView();
       refreshCounts?.();
 
       setStatusWithTimeout(`Successfully uploaded ${uploaded.length} photos!`);
@@ -81,7 +77,7 @@ export function usePhotos({ refreshCounts } = {}) {
     } finally {
       setLoading(false);
     }
-  }, [loadPhotosFromDatabase, setStatusWithTimeout]);
+  }, [reloadCurrentView, setStatusWithTimeout, refreshCounts]);
 
   const handleToggleFavorite = useCallback(async (photo, selectedPhoto, setSelectedPhoto) => {
     try {
@@ -94,25 +90,25 @@ export function usePhotos({ refreshCounts } = {}) {
       refreshCounts?.();
     } catch (err) {
       console.error("Failed to toggle favorite:", err);
-      loadPhotosFromDatabase();
+      reloadCurrentView();
     }
-  }, [loadPhotosFromDatabase, refreshCounts]);
+  }, [reloadCurrentView, refreshCounts]);
 
   const handleDeleteSelected = useCallback(async (selectedPhotos, clearSelection, loadAlbums, loadLocations) => {
     if (!confirm(`Are you sure you want to delete ${selectedPhotos.size} items? This cannot be undone.`)) return;
     try {
       const paths = Array.from(selectedPhotos);
       await invoke('delete_photos', { paths });
-      setPhotos(prev => prev.filter(p => !selectedPhotos.has(p.path)));
       clearSelection();
       loadAlbums();
       loadLocations();
       refreshCounts?.();
+      await reloadCurrentView();
     } catch (err) {
       console.error("Failed to delete photos:", err);
       setError(typeof err === 'string' ? err : err?.message ?? 'Failed to delete items');
     }
-  }, [refreshCounts]);
+  }, [reloadCurrentView, refreshCounts]);
 
   return {
     photos,
@@ -126,11 +122,10 @@ export function usePhotos({ refreshCounts } = {}) {
     setLibraryPath,
     setStatusWithTimeout,
     loadPhotosFromDatabase,
+    reloadCurrentView,
     handleUploadPhotos,
     handleToggleFavorite,
     handleDeleteSelected,
-    // Pagination surface. PhotoGrid wires `loadNextPage` to `endReached` for
-    // any view that resolves to a server-side filter.
     loadNextPage: paged.loadNextPage,
     hasMore: paged.hasMore,
     loadingPage: paged.loadingPage,
